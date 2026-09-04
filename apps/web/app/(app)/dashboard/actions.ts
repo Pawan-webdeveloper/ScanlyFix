@@ -37,11 +37,30 @@ export async function createProjectAction(_prev: ActionState, formData: FormData
   // that package must not learn about pricing, but it can be told a number,
   // and a caller that forgets to supply one does not compile.
   const { plan } = await entitlementsFor(viewer)
-  const result = await createProjectWithMonitors(
-    viewer,
-    { name, url: target.url, orgId },
-    plan.projects,
-  )
+
+  /*
+   * The database write is the one step that can fail for reasons no form
+   * validation can predict — a constraint, a migration gap, a refused
+   * connection. Left uncaught, the user gets Next's opaque error screen with
+   * no next step; caught, they get the cause in the form where they can act
+   * on it, and the stack lands in the server log either way. redirect() stays
+   * outside the try: it works by throwing, and a catch here would swallow it.
+   */
+  let result
+  try {
+    result = await createProjectWithMonitors(
+      viewer,
+      { name, url: target.url, orgId },
+      plan.projects,
+    )
+  } catch (cause) {
+    console.error('[createProjectAction] the database rejected the project create', cause)
+    return {
+      error:
+        'The database refused the request' +
+        (cause instanceof Error ? `: ${cause.message}` : '. Check the server logs.'),
+    }
+  }
 
   if (!result.ok) {
     if (result.reason === 'limit-reached') {

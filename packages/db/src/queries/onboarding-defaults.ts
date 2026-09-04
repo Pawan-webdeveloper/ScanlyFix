@@ -96,14 +96,14 @@ export async function ensureDefaultMonitors(projectId: string): Promise<Monitor[
         enabled: DEFAULT_MONITOR_ENABLED[type],
         intervalS: DEFAULT_MONITOR_INTERVALS[type],
       })
-      .onConflictDoUpdate({
-        target: [monitors.projectId, monitors.type],
-        // The conflict path is "this monitor already exists, leave it
-        // alone". We do NOT overwrite enabled or intervalS here — the
-        // owner may have customised them, and we never silently undo a
-        // user's setting during onboarding.
-        set: {},
-      })
+      .onConflictDoNothing({ target: [monitors.projectId, monitors.type] })
+      // The conflict path is "this monitor already exists, leave it
+      // alone". We do NOT overwrite enabled or intervalS — the owner may
+      // have customised them, and we never silently undo a user's
+      // setting during onboarding. DO NOTHING is that rule: an empty
+      // onConflictDoUpdate set makes Drizzle throw "No values to set",
+      // which broke every caller of this function and of project
+      // creation until the fix.
       .returning()
     if (row) rows.push(row)
   }
