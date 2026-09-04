@@ -168,11 +168,13 @@ export async function createProjectWithMonitors(
           enabled: DEFAULT_MONITOR_ENABLED[type],
           intervalS: DEFAULT_MONITOR_INTERVALS[type],
         })
-        .onConflictDoUpdate({
-          target: [monitors.projectId, monitors.type],
-          // Idempotent on conflict — leave any existing row alone.
-          set: {},
-        })
+        // Idempotent: a monitor row for a brand-new project cannot exist, but
+        // the conflict target keeps the statement safe if this ever runs twice
+        // (a retry after a network blip). Drizzle throws "No values to set" on
+        // an empty onConflictDoUpdate set, so "leave the row alone" is
+        // expressed as DO NOTHING — an empty set there broke every project
+        // creation (see ensureDefaultMonitors for the user-setting rule).
+        .onConflictDoNothing({ target: [monitors.projectId, monitors.type] })
     }
 
     return { ok: true as const, project }
@@ -248,10 +250,10 @@ export async function claimScan(
           enabled: DEFAULT_MONITOR_ENABLED[type],
           intervalS: DEFAULT_MONITOR_INTERVALS[type],
         })
-        .onConflictDoUpdate({
-          target: [monitors.projectId, monitors.type],
-          set: {},
-        })
+        // Same rule as createProjectWithMonitors: never overwrite an existing
+        // monitor's settings, and never ship an empty onConflictDoUpdate set —
+        // Drizzle rejects that with "No values to set".
+        .onConflictDoNothing({ target: [monitors.projectId, monitors.type] })
     }
 
     const claimed = await tx
