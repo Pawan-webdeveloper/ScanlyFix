@@ -23,11 +23,16 @@ cd packages/checks && SCANLYFIX_LIVE=1 pnpm test   # + live end-to-end smoke
 ### Web App
 
 ```sh
-cd apps/web
-pnpm dev                                # Next.js dev server
+pnpm dev                                # web app (:3000) + fix tier (:8082) together
 pnpm build                              # production build
 pnpm test                               # vitest tests
 ```
+
+The AutoFix page and every Fix button call the fix tier (`apps/fixes`, port
+8082) — the process that holds the `OPENROUTER_API_KEY` and talks to the model.
+Without it, Fix buttons show "Could not reach the fix writer" instead of a
+prompt, so start both with `pnpm dev` from the root (or
+`pnpm --filter @scanlyfix/fixes dev` alongside the web app).
 
 
 

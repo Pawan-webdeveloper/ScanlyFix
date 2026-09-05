@@ -8,6 +8,7 @@
   },
   "scripts": {
     "scan": "pnpm --filter @scanlyfix/cli exec tsx src/index.ts",
+    "dev": "turbo run dev --filter=@scanlyfix/web --filter=@scanlyfix/fixes",
     "test": "turbo run test",
     "test:unit": "turbo run test:unit",
     "test:integration": "turbo run test:integration",
