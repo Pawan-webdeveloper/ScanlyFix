@@ -1,13 +1,22 @@
 /**
  * The console overview: what is wrong across every site this account watches.
  *
- * Redesigned to the Vercel console design system: a near-white canvas one step
+ * Designed to the Vercel console design system: a near-white canvas one step
  * below pure-white cards, hairline #eaeaea borders, cards that carry their own
  * header row inside a border-b, Geist body type with tabular figures for every
  * count, and one chromatic colour — the blue accent — reserved for active
  * meters and focus. Dark mode is class-driven (lib/theme.ts): the palette in
  * globals.css inverts through the same tokens, so nothing here branches on the
  * theme.
+ *
+ * Reading order is the triage order: act (scan a site), see the result (the
+ * latest report), orient (the four counts), triage (issue summary and what
+ * needs attention), analyse (issue types beside recent scans), and only then
+ * the inventory — the domains, which are the reference material, not the news.
+ *
+ * Motion is layered in by the PageMotion island (components/console/motion.tsx):
+ * the scan panel and the latest report enter with CSS at first paint; every
+ * section below folds reveals, counts and fills as it is scrolled to.
  */
 
 import Link from 'next/link'
@@ -27,7 +36,8 @@ import { getViewer, requireUser } from '@/lib/authz.ts'
 import { ScanForm } from '@/components/scan/scan-form.tsx'
 import { LatestScanReport } from './latest-scan-report.tsx'
 import { NewProjectForm } from './new-project-form.tsx'
-import { ThemeToggle } from '@/components/console/theme-toggle.tsx'
+import { PageHeader } from '@/components/console/page-header.tsx'
+import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 
 export const metadata = { title: 'Dashboard' }
@@ -121,19 +131,44 @@ export default async function DashboardPage() {
 
   return (
     <div className="console flex min-h-dvh flex-col bg-c-bg text-c-ink">
-      <TopBar email={user.email} />
+      <PageHeader
+        title="Overview"
+        actions={
+          <>
+            <Link
+              href="/pricing"
+              className="hidden h-9 items-center gap-1.5 rounded-lg border border-c-line bg-c-card px-3.5
+                         text-[13px] font-medium text-c-ink transition-colors hover:bg-c-soft sm:flex"
+            >
+              <Icon name="book" size={14} />
+              Plans
+            </Link>
+            <Link
+              href="/settings/billing"
+              aria-label="Settings"
+              className="grid h-9 w-9 place-items-center rounded-lg text-c-muted transition-colors hover:bg-c-soft hover:text-c-ink"
+            >
+              <Icon name="settings" />
+            </Link>
+            <span
+              title={user.email}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-c-brand text-[13px] font-medium text-c-brand-ink"
+            >
+              {user.email.slice(0, 1).toUpperCase()}
+            </span>
+          </>
+        }
+      />
 
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-8 px-6 py-8 sm:px-10">
+      <div
+        data-motion-scope="dashboard"
+        className="mx-auto flex w-full max-w-[1200px] flex-col gap-8 px-6 py-8 sm:px-10"
+      >
+        <PageMotion scope="dashboard" />
+
         <ScanPanel />
 
         <LatestScanReport scan={latestScan} viewer={viewer} />
-
-        <div className="grid gap-8 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <IssueSummary summary={summary} />
-          <MonitoringPanel sites={projects.length} />
-        </div>
-
-        <NeedsAttention findings={summary.needsAttention} scanned={summary.sitesScanned} />
 
         <AssetSummary
           sites={projects.length}
@@ -142,53 +177,30 @@ export default async function DashboardPage() {
           avg={avg}
         />
 
-        <IssueTypes summary={summary} />
+        <div className="grid gap-8 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <IssueSummary summary={summary} />
+          <MonitoringPanel sites={projects.length} />
+        </div>
+
+        <NeedsAttention findings={summary.needsAttention} scanned={summary.sitesScanned} />
+
+        {/*
+         * Paired when there is history to pair with: a lone card in a
+         * two-column grid would shrink to half width on wide screens, so a
+         * fresh account gets IssueTypes full width instead.
+         */}
+        {recentScans.length > 0 ? (
+          <div className="grid gap-8 xl:grid-cols-2">
+            <IssueTypes summary={summary} />
+            <RecentScans scans={recentScans} />
+          </div>
+        ) : (
+          <IssueTypes summary={summary} />
+        )}
 
         <Sites projects={projects} orgId={user.orgId} />
-
-        {recentScans.length > 0 && <RecentScans scans={recentScans} />}
       </div>
     </div>
-  )
-}
-
-/* -------------------------------------------------------------------------- */
-/* Chrome                                                                     */
-/* -------------------------------------------------------------------------- */
-
-function TopBar({ email }: { email: string }) {
-  return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-c-line bg-c-bg/80 backdrop-blur-md px-4 sm:px-6">
-      <h1 className="min-w-0 truncate pl-12 text-sm font-semibold text-c-ink lg:pl-1">
-        Overview
-      </h1>
-
-      <div className="flex-1" />
-
-      <ThemeToggle />
-
-      <Link
-        href="/pricing"
-        className="hidden h-9 items-center gap-1.5 rounded-lg border border-c-line bg-c-card px-3.5
-                   text-[13px] font-medium text-c-ink transition-colors hover:bg-c-soft sm:flex"
-      >
-        <Icon name="book" size={14} />
-        Plans
-      </Link>
-      <Link
-        href="/settings/billing"
-        aria-label="Settings"
-        className="grid h-9 w-9 place-items-center rounded-lg text-c-muted transition-colors hover:bg-c-soft hover:text-c-ink"
-      >
-        <Icon name="settings" />
-      </Link>
-      <span
-        title={email}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-c-brand text-[13px] font-medium text-c-brand-ink"
-      >
-        {email.slice(0, 1).toUpperCase()}
-      </span>
-    </header>
   )
 }
 
@@ -201,24 +213,33 @@ function TopBar({ email }: { email: string }) {
  * divided from the body by the same hairline the page draws everywhere else.
  * An outer header above a bordered box needs two spacing decisions per card;
  * this pattern needs none, which is why every console card can share it.
+ *
+ * Unknown props (`data-reveal`, `id`, `aria-*`) pass through to the section —
+ * the motion island choreographs whole cards by attribute, and a card API
+ * that swallowed data attributes would make that impossible.
  */
 function Card({
   title,
   action,
   children,
   className = '',
+  ...rest
 }: {
   title?: string
   action?: React.ReactNode
   children: React.ReactNode
   className?: string
-}) {
+} & Omit<React.ComponentProps<'section'>, 'title' | 'action' | 'className' | 'children'>) {
   return (
     <section
+      {...rest}
       className={`overflow-hidden rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${className}`}
     >
       {(title || action) && (
-        <header className="flex items-center justify-between gap-4 border-b border-c-line px-6 py-4">
+        <header
+          data-reveal-item=""
+          className="flex items-center justify-between gap-4 border-b border-c-line px-6 py-4"
+        >
           {title && <h2 className="text-sm font-medium text-c-ink">{title}</h2>}
           {action}
         </header>
@@ -233,6 +254,7 @@ function CardAction({ href, children }: { href: string; children: React.ReactNod
   return (
     <Link
       href={href}
+      data-press=""
       className="rounded-md border border-c-line bg-c-card px-3 py-1.5 text-[12px] font-medium text-c-ink
                  transition-colors hover:bg-c-soft"
     >
@@ -245,9 +267,13 @@ function CardAction({ href, children }: { href: string; children: React.ReactNod
 /* Scan Panel                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Above the fold, so its entrance is CSS (first paint), not the island —
+ * see `.console-enter` in globals.css for why.
+ */
 function ScanPanel() {
   return (
-    <section className="rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+    <section className="console-enter rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <div className="px-6 py-8 sm:px-8 sm:py-10">
         <h2 className="text-2xl font-semibold tracking-tight text-c-ink">
           Scan a site
@@ -283,15 +309,16 @@ function IssueSummary({ summary }: { summary: DashboardSummary }) {
   const present = SEVERITIES.filter((s) => open[s] > 0)
 
   return (
-    <Card title="Issue summary">
+    <Card title="Issue summary" data-reveal="">
       <div className="px-6 py-6">
-        <div className="flex h-2 w-full overflow-hidden rounded-full bg-c-soft">
+        <div data-reveal-item="" className="flex h-2 w-full overflow-hidden rounded-full bg-c-soft">
           {openTotal === 0 ? (
             <span className="h-full w-full bg-c-line" />
           ) : (
             present.map((severity) => (
               <span
                 key={severity}
+                data-bar=""
                 className={`h-full ${SEVERITY_BG[severity]}`}
                 style={{ width: `${(open[severity] / openTotal) * 100}%` }}
               />
@@ -299,9 +326,15 @@ function IssueSummary({ summary }: { summary: DashboardSummary }) {
           )}
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
+        <div
+          data-reveal-item=""
+          className="mt-6 flex flex-wrap items-center justify-between gap-x-8 gap-y-4"
+        >
           <p className="flex items-baseline gap-2.5">
-            <span className="console-num text-3xl font-semibold leading-none tracking-tight text-c-ink">
+            <span
+              data-count={String(openTotal)}
+              className="console-num text-3xl font-semibold leading-none tracking-tight text-c-ink"
+            >
               {openTotal}
             </span>
             <span className="text-[13px] text-c-muted">
@@ -323,7 +356,7 @@ function IssueSummary({ summary }: { summary: DashboardSummary }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 border-t border-c-line sm:grid-cols-4">
+      <div data-reveal-item="" className="grid grid-cols-2 border-t border-c-line sm:grid-cols-4">
         <MiniStat icon="feed" label="Open" value={summary.openTotal} hint="awaiting a fix" />
         <MiniStat icon="shield" label="Fixed" value={summary.fixed} hint="confirmed gone" divider />
         <MiniStat icon="bell" label="Ignored" value={summary.ignored} hint="muted by you" divider />
@@ -372,8 +405,11 @@ function MiniStat({
 
 function MonitoringPanel({ sites }: { sites: number }) {
   return (
-    <Card title="Monitoring">
-      <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+    <Card title="Monitoring" data-reveal="">
+      <div
+        data-reveal-item=""
+        className="flex min-h-[180px] flex-col items-center justify-center gap-3 px-6 py-8 text-center"
+      >
         <span className="grid h-11 w-11 place-items-center rounded-lg border border-c-line bg-c-soft text-c-muted">
           <Icon name="uptime" size={20} />
         </span>
@@ -400,12 +436,13 @@ function NeedsAttention({ findings, scanned }: { findings: DashboardFinding[]; s
   return (
     <Card
       title="Needs attention"
+      data-reveal=""
       action={
         findings.length > 0 ? <CardAction href="#sites">View all</CardAction> : null
       }
     >
       {findings.length === 0 ? (
-        <p className="px-6 py-8 text-center text-sm text-c-muted text-pretty">
+        <p data-reveal-item="" className="px-6 py-8 text-center text-sm text-c-muted text-pretty">
           {scanned === 0
             ? 'Nothing scanned yet — run a scan above and the worst findings land here.'
             : 'No critical or high findings are open. That is the good outcome.'}
@@ -413,7 +450,7 @@ function NeedsAttention({ findings, scanned }: { findings: DashboardFinding[]; s
       ) : (
         <ul className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           {findings.map((finding) => (
-            <li key={finding.id}>
+            <li key={finding.id} data-reveal-item="">
               <Link
                 href={`/scan/${finding.scanId}`}
                 className="flex h-full flex-col gap-2 rounded-lg border border-c-line bg-c-card p-4
@@ -443,6 +480,12 @@ function NeedsAttention({ findings, scanned }: { findings: DashboardFinding[]; s
 /* Asset Summary                                                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The orientation strip: four counts that answer "where am I" before the
+ * detail cards below answer "what exactly". Raised above the issue cards for
+ * that reason — and the numbers count up on arrival, so the eye lands on
+ * them once instead of re-reading four static digits.
+ */
 function AssetSummary({
   sites,
   scans,
@@ -455,7 +498,7 @@ function AssetSummary({
   avg: number | null
 }) {
   return (
-    <section>
+    <section data-reveal="" aria-label="Assets">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <BigStat icon="globe" label="Domains" value={String(sites)} hint="tracked as projects" />
         <BigStat icon="search" label="Sites scanned" value={String(scanned)} hint="with a result" />
@@ -486,12 +529,16 @@ function BigStat({
   tone?: string
 }) {
   return (
-    <div className="rounded-lg border border-c-line bg-c-card p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+    <div
+      data-reveal-item=""
+      className="rounded-lg border border-c-line bg-c-card p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+    >
       <p className="flex items-center gap-2 text-[12px] font-medium text-c-muted">
         <Icon name={icon} size={14} />
         {label}
       </p>
       <p
+        data-count={value}
         className={`console-num mt-3 text-2xl font-semibold leading-none tracking-tight ${tone ?? 'text-c-ink'}`}
       >
         {value}
@@ -509,8 +556,12 @@ function IssueTypes({ summary }: { summary: DashboardSummary }) {
   const peak = Math.max(1, ...PILLARS.map((p) => summary.byCategory[p.key]))
 
   return (
-    <Card title="Issue types" action={<span className="text-[12px] text-c-muted">by pillar</span>}>
-      <ul className="flex flex-col gap-4 px-6 py-6">
+    <Card
+      title="Issue types"
+      data-reveal=""
+      action={<span className="text-[12px] text-c-muted">by pillar</span>}
+    >
+      <ul data-reveal-item="" className="flex flex-col gap-4 px-6 py-6">
         {PILLARS.map((pillar) => {
           const n = summary.byCategory[pillar.key]
           return (
@@ -518,6 +569,7 @@ function IssueTypes({ summary }: { summary: DashboardSummary }) {
               <span className="w-28 shrink-0 text-[13px] text-c-body sm:w-36">{pillar.label}</span>
               <span className="h-2 flex-1 overflow-hidden rounded-full bg-c-soft">
                 <span
+                  {...(n > 0 ? { 'data-bar': '' } : {})}
                   className={`block h-full rounded-full transition-all duration-500 ${
                     n > 0 ? 'bg-c-accent' : 'bg-transparent'
                   }`}
@@ -541,14 +593,17 @@ function IssueTypes({ summary }: { summary: DashboardSummary }) {
 
 function Sites({ projects, orgId }: { projects: ProjectSummary[]; orgId: string }) {
   return (
-    <section id="sites" className="scroll-mt-20">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+    <section id="sites" data-reveal="" className="scroll-mt-20">
+      <div data-reveal-item="" className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-sm font-medium text-c-ink">Domains</h2>
         <NewProjectForm orgId={orgId} />
       </div>
 
       {projects.length === 0 ? (
-        <div className="rounded-lg border border-c-line bg-c-card px-6 py-10 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+        <div
+          data-reveal-item=""
+          className="rounded-lg border border-c-line bg-c-card px-6 py-10 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+        >
           <p className="text-sm font-medium text-c-ink">No domains tracked yet</p>
           <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-c-muted text-pretty">
             Add a site to keep its history and watch its score move, or scan any URL above and file
@@ -572,7 +627,7 @@ function ProjectRow({ summary }: { summary: ProjectSummary }) {
   const failed = latest?.status === 'failed'
 
   return (
-    <li className="[&:not(:first-child)]:border-t [&:not(:first-child)]:border-c-line">
+    <li data-reveal-item="" className="[&:not(:first-child)]:border-t [&:not(:first-child)]:border-c-line">
       <Link
         href={`/projects/${project.id}`}
         className="flex items-center gap-4 px-6 py-4 transition-colors hover:bg-c-soft/60"
@@ -622,13 +677,18 @@ function DeltaTag({ delta }: { delta: number | null }) {
 
 function RecentScans({ scans }: { scans: Scan[] }) {
   return (
-    <Card title="Recent scans" action={<span className="text-[12px] text-c-muted">not filed under a domain</span>}>
+    <Card
+      title="Recent scans"
+      data-reveal=""
+      action={<span className="text-[12px] text-c-muted">not filed under a domain</span>}
+    >
       <ul>
         {scans.map((scan) => {
           const score = scan.scores?.overall ?? null
           return (
             <li
               key={scan.id}
+              data-reveal-item=""
               className="[&:not(:first-child)]:border-t [&:not(:first-child)]:border-c-line"
             >
               <Link

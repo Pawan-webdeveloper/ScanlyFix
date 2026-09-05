@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import anime from 'animejs'
+import { capStagger, motionAllowed } from '@/components/console/motion.ts'
 import { StatusDot } from './status-dot'
 import { UptimeBadge } from './uptime-badge'
 
@@ -83,6 +85,8 @@ function MonitorRow({ monitor }: { monitor: MonitorItem }) {
   return (
     <Link
       href={`/monitors/${monitor.id}`}
+      data-row=""
+      data-press=""
       className="flex items-center gap-4 rounded-lg border border-c-line bg-c-card px-4 py-3 transition-colors hover:border-c-line/80 hover:bg-c-soft"
     >
       <StatusDot status={displayStatus} tooltip={tooltip} />
@@ -106,6 +110,7 @@ function MonitorRow({ monitor }: { monitor: MonitorItem }) {
 export function MonitorList() {
   const [monitors, setMonitors] = useState<MonitorItem[]>([])
   const [loading, setLoading] = useState(true)
+  const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const load = () =>
@@ -118,6 +123,33 @@ export function MonitorList() {
     const id = setInterval(load, 30_000)
     return () => clearInterval(id)
   }, [])
+
+  /*
+   * The rows stagger in once, when the FIRST load lands. The list re-polls
+   * every 30s; re-animating on every poll would make the page lie about
+   * something having changed when nothing has, so the entrance ref fires
+   * exactly once. useLayoutEffect keeps the hidden state and the first
+   * animation frame in the same paint, so there is no flash of settled rows.
+   */
+  const entered = useRef(false)
+  useLayoutEffect(() => {
+    if (loading || entered.current || monitors.length === 0) return
+    entered.current = true
+    if (!motionAllowed()) return
+
+    const rows = listRef.current?.querySelectorAll<HTMLElement>('[data-row]')
+    if (!rows || rows.length === 0) return
+    const step = capStagger(rows.length, 50, 300)
+    const animation = anime({
+      targets: rows,
+      opacity: [0, 1],
+      translateY: [8, 0],
+      duration: 450,
+      easing: 'easeOutExpo',
+      delay: (_element: unknown, index: number) => index * step,
+    })
+    return () => animation.pause()
+  }, [loading, monitors])
 
   if (loading) {
     return (
@@ -138,7 +170,7 @@ export function MonitorList() {
   }
 
   return (
-    <div className="space-y-2">
+    <div ref={listRef} className="space-y-2">
       {monitors.map((m) => (
         <MonitorRow key={m.id} monitor={m} />
       ))}

@@ -1,8 +1,9 @@
 import { Skeleton, SkeletonPage } from '@/components/ui/skeleton.tsx'
 
 /**
- * Shaped to the dashboard's real card system — hero panel, two-column row,
- * stat tiles — so the page does not reflow when the data lands.
+ * Shaped to the dashboard's real card system — scan panel, stat tiles,
+ * two-column rows, list rows — in the same order the page renders them, so
+ * the page does not reflow when the data lands.
  */
 export default function DashboardLoading() {
   return (
@@ -21,6 +22,16 @@ export default function DashboardLoading() {
           <Skeleton className="h-7 w-40 rounded" />
           <Skeleton className="mt-3 h-4 w-80 rounded" />
           <Skeleton className="mt-6 h-11 w-full max-w-2xl rounded-lg" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((tile) => (
+            <div key={tile} className="rounded-lg border border-c-line bg-c-card p-5">
+              <Skeleton className="h-3.5 w-20 rounded" />
+              <Skeleton className="mt-3 h-8 w-12 rounded" />
+              <Skeleton className="mt-2 h-3 w-24 rounded" />
+            </div>
+          ))}
         </div>
 
         <div className="grid gap-8 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -45,12 +56,25 @@ export default function DashboardLoading() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((tile) => (
-            <div key={tile} className="rounded-lg border border-c-line bg-c-card p-5">
-              <Skeleton className="h-3.5 w-20 rounded" />
-              <Skeleton className="mt-3 h-8 w-12 rounded" />
-              <Skeleton className="mt-2 h-3 w-24 rounded" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2].map((tile) => (
+            <div key={tile} className="rounded-lg border border-c-line bg-c-card p-4">
+              <Skeleton className="h-3 w-24 rounded" />
+              <Skeleton className="mt-3 h-4 w-full rounded" />
+              <Skeleton className="mt-2 h-3 w-32 rounded" />
+            </div>
+          ))}
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-c-line bg-c-card">
+          {[0, 1, 2].map((row) => (
+            <div key={row} className={`flex items-center gap-4 px-6 py-4 ${row > 0 ? 'border-t border-c-line' : ''}`}>
+              <Skeleton className="h-9 w-9 rounded-md" />
+              <div className="flex-1">
+                <Skeleton className="h-4 w-40 rounded" />
+                <Skeleton className="mt-1.5 h-3 w-56 rounded" />
+              </div>
+              <Skeleton className="h-6 w-8 rounded" />
             </div>
           ))}
         </div>

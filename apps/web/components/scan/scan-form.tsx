@@ -1,8 +1,9 @@
 'use client'
 
-import { useId, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { useScanSubmit } from './use-scan-submit.ts'
 import { useSession } from '@/components/auth/supabase-context.ts'
+import { shake } from '@/components/console/motion.ts'
 
 /**
  * The standard scan form, used wherever the page is not the hero.
@@ -62,6 +63,7 @@ export function ScanForm({
   const inputId = useId()
   const errorId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
+  const fieldRowRef = useRef<HTMLDivElement>(null)
   const session = useSession()
   const { value, setValue, pending, error, submit } = useScanSubmit({
     restore,
@@ -69,6 +71,15 @@ export function ScanForm({
     afterStart: stayAfterStart ? 'refresh' : 'dashboard',
     authState: { isAuthenticated: session.data?.session?.user != null, isLoading: session.isLoading },
   })
+
+  /*
+   * A refused URL shakes the field row, once per failed attempt. The engine
+   * (anime.js) loads on demand, so pages that render this form but never show
+   * an error never pay for it — this form mounts on the landing page too.
+   */
+  useEffect(() => {
+    if (error) void shake(fieldRowRef.current)
+  }, [error])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -82,7 +93,7 @@ export function ScanForm({
         Website address
       </label>
 
-      <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+      <div ref={fieldRowRef} className="mt-2 flex flex-col gap-2 sm:flex-row">
         <input
           id={inputId}
           ref={inputRef}
@@ -103,6 +114,7 @@ export function ScanForm({
 
         <button
           type="submit"
+          data-press=""
           disabled={pending}
           className={skin.button}
         >

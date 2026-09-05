@@ -1,7 +1,9 @@
 'use client'
 
+import { useEffect, useRef } from 'react'
 import { useActionState } from 'react'
 import { createProjectAction, type ActionState } from './actions.ts'
+import { shake } from '@/components/console/motion.ts'
 
 /**
  * The orgId is passed through the form for convenience, and re-derived from the
@@ -11,13 +13,22 @@ import { createProjectAction, type ActionState } from './actions.ts'
  * Styled in the console's tokens rather than the terminal's, because the
  * dashboard is the only page that mounts it. If it ever appears on a terminal
  * surface it needs the `tone` treatment ScanForm has, not a second copy.
+ *
+ * A rejected URL shakes the field row once per failed attempt: the error text
+ * below says what went wrong, the shake points at where without a second
+ * glance. The effect keys on the error value, so a second failure re-shakes.
  */
 export function NewProjectForm({ orgId }: { orgId: string }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(createProjectAction, {})
+  const fieldRowRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (state.error) void shake(fieldRowRef.current)
+  }, [state.error])
 
   return (
     <form action={action} className="flex flex-col items-end gap-1">
-      <div className="flex gap-2">
+      <div ref={fieldRowRef} className="flex gap-2">
         <input type="hidden" name="orgId" value={orgId} />
         <label htmlFor="new-project-url" className="sr-only">
           Site address
@@ -39,6 +50,7 @@ export function NewProjectForm({ orgId }: { orgId: string }) {
         />
         <button
           type="submit"
+          data-press=""
           disabled={pending}
           className="rounded-lg bg-c-brand px-4 py-2 text-[13px] font-medium text-c-brand-ink
                      transition-opacity hover:opacity-90 disabled:opacity-60"

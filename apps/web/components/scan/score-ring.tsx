@@ -4,6 +4,11 @@
  * A server component: an SVG arc has no state, so shipping JavaScript for it
  * would be paying for nothing. The colour bands (90 / 70) are the same ones the
  * CLI uses, so a score never looks healthy in one surface and poor in the other.
+ *
+ * The data-draw / data-count attributes are motion hooks for the console's
+ * PageMotion island (components/console/motion.tsx): where the ring renders
+ * inside a motion scope the arc sweeps in and the number counts up; on the
+ * shareable report page, which mounts no island, they are inert markup.
  */
 
 const BANDS = [
@@ -44,6 +49,7 @@ export function ScoreRing({ score, size = 168 }: { score: number; size?: number 
           strokeWidth={stroke}
         />
         <circle
+          data-draw=""
           cx={size / 2}
           cy={size / 2}
           r={radius}
@@ -59,6 +65,7 @@ export function ScoreRing({ score, size = 168 }: { score: number; size?: number 
         y="50%"
         textAnchor="middle"
         dominantBaseline="central"
+        data-count={String(score)}
         className="font-semibold tabular-nums"
         fontSize={size * 0.3}
         fill="var(--ink)"

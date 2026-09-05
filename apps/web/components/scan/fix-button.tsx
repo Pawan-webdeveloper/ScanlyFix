@@ -93,6 +93,7 @@ export function FixButton({ scanId, checkId }: { scanId: string; checkId: string
       <button
         type="button"
         onClick={() => void generate()}
+        data-press=""
         disabled={state.kind === 'loading'}
         className="inline-flex items-center gap-1.5 border border-accent bg-accent-soft px-3 py-1.5 text-xs font-semibold
                    text-accent-ink transition-colors hover:bg-accent hover:text-accent-ink disabled:opacity-60"

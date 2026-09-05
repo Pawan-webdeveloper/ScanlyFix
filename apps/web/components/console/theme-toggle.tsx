@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Icon } from './icons.tsx'
+import { pop } from './motion.ts'
 import {
   applyTheme,
   readStoredPreference,
@@ -66,10 +67,13 @@ export function ThemeToggle({ className = '' }: { className?: string }) {
     return () => query.removeEventListener('change', onSystemChange)
   }, [preference])
 
-  const choose = useCallback((next: ThemePreference) => {
+  const choose = useCallback((next: ThemePreference, button: Element | null) => {
     setPreference(next)
     storePreference(next)
     applyTheme(next)
+    // A theme change repaints the whole page at once; the small physical
+    // settle on the control ties the before and after together for the eye.
+    void pop(button)
   }, [])
 
   return (
@@ -87,7 +91,7 @@ export function ThemeToggle({ className = '' }: { className?: string }) {
             role="radio"
             aria-checked={active}
             title={option.label}
-            onClick={() => choose(option.value)}
+            onClick={(event) => choose(option.value, event.currentTarget)}
             className={`grid h-7 w-7 place-items-center rounded-md transition-colors ${
               active
                 ? 'bg-c-soft text-c-ink'
