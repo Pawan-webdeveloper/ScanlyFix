@@ -105,7 +105,14 @@ export async function ensureDefaultMonitors(projectId: string): Promise<Monitor[
       // which broke every caller of this function and of project
       // creation until the fix.
       .returning()
-    if (row) rows.push(row)
+    if (row) {
+      rows.push(row)
+    } else {
+      const existing = await db.query.monitors.findFirst({
+        where: and(eq(monitors.projectId, projectId), eq(monitors.type, type)),
+      })
+      if (existing) rows.push(existing)
+    }
   }
   return rows
 }
