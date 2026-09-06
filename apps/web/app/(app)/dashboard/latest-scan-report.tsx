@@ -10,13 +10,11 @@
  * section cannot go stale, because the page re-renders through the loader
  * every time.
  *
- * Server-rendered except for two islands: the ScanProgress flip that swaps the
- * server render for the report the moment the scan lands, and the score radar
- * (recharts — see components/scan/score-radar.tsx), which draws the six real
- * pillar scores of this scan as one shape. The shareable report /scan/[id]
- * still leads with the score donut; the dashboard trades that single number
- * for the per-pillar profile, because triage asks "where is it weak", and the
- * pillar list beside the radar carries the precise figures either way.
+ * Server-rendered on purpose: the report markup is the same one /scan/[id]
+ * renders (ScoreRing, PillarScores, FindingsList), so the dashboard and the
+ * shareable report cannot drift. Polling is the one client island —
+ * ScanProgress flips the server render to the report the moment the scan
+ * lands, with no report JSON duplicated into a client fetch.
  */
 
 import Link from 'next/link'
@@ -24,8 +22,7 @@ import type { ScanWithFindings, Viewer } from '@scanlyfix/db'
 import { getViewer } from '@/lib/authz.ts'
 import { entitlementsFor } from '@/lib/entitlements.ts'
 import { redactFindings } from '@/lib/redact.ts'
-import { ScoreRadar } from '@/components/scan/score-radar.tsx'
-import { radarScoreData } from '@/components/scan/score-radar-data.ts'
+import { ScoreRing } from '@/components/scan/score-ring.tsx'
 import { PillarScores } from '@/components/scan/pillar-scores.tsx'
 import { FindingsList } from '@/components/scan/findings-list.tsx'
 import { ScanProgress } from '@/components/scan/scan-progress.tsx'
@@ -130,7 +127,7 @@ async function Done({ scan, viewer }: { scan: ScanWithFindings; viewer: Viewer }
       <div className="flex flex-col items-center gap-6 sm:flex-row">
         {scan.scores && (
           <>
-            <ScoreRadar data={radarScoreData(scan.scores)} overall={scan.scores.overall} />
+            <ScoreRing score={scan.scores.overall} size={140} />
             <div className="w-full flex-1">
               <PillarScores scores={scan.scores} />
             </div>
