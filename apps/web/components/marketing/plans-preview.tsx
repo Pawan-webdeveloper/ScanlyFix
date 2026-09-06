@@ -35,7 +35,7 @@ export function PlansPreview() {
         lead={`All ${TOTAL_CHECKS} checks run on every scan, free or paid. What a plan changes is how much of the report comes back — never how carefully the site was measured.`}
       />
 
-      <div className="mt-12 grid gap-px overflow-hidden border border-line bg-line sm:grid-cols-2">
+      <div data-motion="stagger" className="mt-12 grid gap-px overflow-hidden border border-line bg-line sm:grid-cols-2">
         {ORDERED_PLANS.map((plan) => (
           <div key={plan.id} className="flex min-w-0 flex-col bg-canvas p-6 sm:p-8">
             <div className="flex items-baseline gap-3">

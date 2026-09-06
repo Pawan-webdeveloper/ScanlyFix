@@ -8,6 +8,7 @@ import { Safety } from '@/components/marketing/safety.tsx'
 import { PlansPreview } from '@/components/marketing/plans-preview.tsx'
 import { Faq } from '@/components/marketing/faq.tsx'
 import { FinalCta } from '@/components/marketing/final-cta.tsx'
+import { HomeMotion } from '@/components/marketing/home-motion.tsx'
 
 /**
  * The landing page.
@@ -22,6 +23,11 @@ import { FinalCta } from '@/components/marketing/final-cta.tsx'
  * here reads a session or a database, so the whole page prerenders to static
  * HTML — which matters on the one page whose Core Web Vitals this product's
  * own engine would be measuring.
+ *
+ * HomeMotion is the page's one motion island: it renders the scan rail and
+ * runs the scroll choreography (GSAP + ScrollTrigger, dynamically imported)
+ * against the data-motion attributes the sections carry. The server renders
+ * every state final; the island only ever hides what it is about to reveal.
  */
 export default function LandingPage() {
   return (
@@ -36,6 +42,7 @@ export default function LandingPage() {
       <PlansPreview />
       <Faq />
       <FinalCta />
+      <HomeMotion />
     </>
   )
 }

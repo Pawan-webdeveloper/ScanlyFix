@@ -48,7 +48,7 @@ export function Safety() {
         lead="You are about to hand a security tool the address of something you own. These are the limits it is built to, not the ones it intends to keep."
       />
 
-      <dl className="mt-12 grid gap-px overflow-hidden border border-line bg-line sm:grid-cols-2">
+      <dl data-motion="stagger" className="mt-12 grid gap-px overflow-hidden border border-line bg-line sm:grid-cols-2">
         {NEVER.map(({ title, body }) => (
           <div key={title} className="min-w-0 bg-canvas p-7">
             <dt className="flex items-start gap-3 text-lg font-semibold tracking-tight text-balance">
@@ -65,7 +65,10 @@ export function Safety() {
 
 function Cross() {
   return (
+    // data-motion="draw" lets the motion island draw the stroke on arrival;
+    // inert on pages without the island.
     <svg
+      data-motion="draw"
       width="16"
       height="16"
       viewBox="0 0 16 16"

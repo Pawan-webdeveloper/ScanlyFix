@@ -7,13 +7,20 @@ import { TOTAL_CHECKS } from '@/lib/pillars.ts'
  * Literally the same component — a reader who scrolled the whole page should
  * not have to scroll back, and a second, subtly different form is how the two
  * drift until one of them stops validating the way the API does.
+ *
+ * The closing ask reveals as one beat (data-motion="heading" gives its
+ * children the same arrival the numbered sections get), because it is the
+ * last readout of the scan.
  */
 export function FinalCta() {
   return (
     <section className="relative overflow-hidden border-t border-line">
       <div aria-hidden="true" className="bg-grid pointer-events-none absolute inset-0" />
 
-      <div className="relative mx-auto max-w-5xl px-6 py-20 sm:py-28">
+      <div
+        data-motion="heading"
+        className="relative mx-auto max-w-5xl px-6 py-20 sm:py-28"
+      >
         <h2 className="max-w-[22ch] text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
           Find out what yours is quietly getting wrong.
         </h2>
