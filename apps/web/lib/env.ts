@@ -139,19 +139,19 @@ export const serverEnv = {
   },
 
   /**
-   * Fix tier (apps/fixes). Turns one finding into the prompt that fixes it,
-   * written by a model. Gated exactly like the repo scanner: a deployment
-   * with no fix tier still works everywhere else, and the Fix button explains
-   * itself rather than throwing — see lib/fixes.ts.
+   * Fix prompts (lib/fixes.ts). One finding in, the prompt that fixes it out,
+   * written by a model through OpenRouter. Gated exactly like the repo
+   * scanner: a deployment with no key still works everywhere else, and the
+   * Fix button explains itself rather than throwing.
    */
-  get fixesUrl() {
-    return process.env.SCANLYFIX_FIXES_URL ?? ''
+  get openrouterApiKey() {
+    return process.env.OPENROUTER_API_KEY ?? ''
   },
-  get fixesToken() {
-    return process.env.SCANLYFIX_FIXES_TOKEN ?? ''
+  get fixesModel() {
+    return process.env.FIXES_MODEL ?? ''
   },
   get fixesConfigured() {
-    return Boolean(process.env.SCANLYFIX_FIXES_URL && process.env.SCANLYFIX_FIXES_TOKEN)
+    return Boolean(process.env.OPENROUTER_API_KEY)
   },
 
   /**
