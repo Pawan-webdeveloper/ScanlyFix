@@ -71,7 +71,9 @@ describe('generateFix', () => {
     expect(result).toEqual({ ok: true, prompt: 'Add the Content-Security-Policy header …' })
     expect(authorization).toBe('Bearer test-key')
     expect(requestBody?.model).toBe('minimax/minimax-m3:free')
-    expect(requestBody?.max_tokens).toBe(700)
+    // The ceiling has to leave room for reasoning models, which spend
+    // completion tokens thinking before they write (lib/fixes.ts).
+    expect(requestBody?.max_tokens).toBe(1500)
     expect(requestBody?.temperature).toBe(0.2)
     const messages = requestBody?.messages as Array<{ role: string; content: string }>
     expect(messages[0]?.role).toBe('system')

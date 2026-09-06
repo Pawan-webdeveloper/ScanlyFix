@@ -102,6 +102,103 @@ Rules:
 const DEFAULT_MODEL = 'minimax/minimax-m3:free'
 
 /**
+ * What a completion attempt can conclude with. `canFallback` marks the
+ * failures where a DIFFERENT model plausibly succeeds: the free tier's 429s
+ * are per-model, and a 5xx or an empty completion is one provider having a
+ * bad moment. Key-level refusals (401/402/403) fail for every model, so they
+ * end the attempt chain — retrying a rejected key against other models just
+ * multiplies the wait.
+ */
+type Attempt =
+  | { ok: true; prompt: string }
+  | { ok: false; reason: FixFailureReason; canFallback: boolean }
+
+/** A completion is ~200 words; the ceiling exists so a runaway becomes a failure, not a bill. Reasoning models spend completion tokens thinking before they write, so the ceiling has to leave room for the thinking too. */
+const MAX_TOKENS = 1500
+
+async function attemptModel(model: string, finding: FixFinding): Promise<Attempt> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  timer.unref()
+
+  let response: Response
+  try {
+    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${serverEnv.openrouterApiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: buildMessages(finding),
+        max_tokens: MAX_TOKENS,
+        temperature: 0.2,
+      }),
+      signal: controller.signal,
+    })
+  } catch {
+    return { ok: false, reason: 'network', canFallback: false }
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    // Server-side log only: the visitor gets the generic sentence, the
+    // operator gets the status and enough of the body to act on.
+    console.error('openrouter refused', response.status, body.slice(0, 300))
+    if (response.status === 429) return { ok: false, reason: 'busy', canFallback: true }
+    // 401/402/403 are properties of the KEY — another model changes nothing.
+    const keyLevel = response.status === 401 || response.status === 402 || response.status === 403
+    return { ok: false, reason: 'upstream', canFallback: !keyLevel }
+  }
+
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    return { ok: false, reason: 'upstream', canFallback: true }
+  }
+
+  const choice = (payload as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]
+    ?.message
+  if (typeof choice?.content !== 'string' || choice.content.trim() === '') {
+    return { ok: false, reason: 'upstream', canFallback: true }
+  }
+
+  return { ok: true, prompt: (choice.content as string).trim() }
+}
+
+/**
+ * Free models come and go weekly, so the fallback chain is DISCOVERED at
+ * failure time rather than hardcoded to rot: the public model list, the free
+ * ids, minus the one that just failed and the non-chat strays, in a stable
+ * order, two tries at most. An empty result means no fallback, which lands
+ * the visitor where they started — the retry button.
+ */
+const NON_CHAT = /(embed|rerank|guard|moderation|safety|omni|whisper|tts|image|video)/
+
+async function discoverAlternateModels(failed: string): Promise<string[]> {
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      signal: AbortSignal.timeout(5_000),
+    })
+    if (!response.ok) return []
+    const payload = (await response.json()) as { data?: Array<{ id?: unknown }> }
+    const ids = (payload.data ?? [])
+      .map((model) => model.id)
+      .filter((id): id is string => typeof id === 'string')
+    return ids
+      .filter((id) => id.endsWith(':free') && id !== failed && !NON_CHAT.test(id))
+      .sort()
+      .slice(0, 2)
+  } catch {
+    return []
+  }
+}
+
+/**
  * The message array for one request. Pure, so the exact wording leaving the
  * backend is asserted by a test rather than reviewed by hope.
  */
@@ -128,65 +225,28 @@ export function buildMessages(finding: FixFinding): Array<{ role: 'system' | 'us
 const TIMEOUT_MS = 45_000
 
 /**
- * One completion, straight to OpenRouter. Retries are the CALLER's decision
- * (the retry button is a product behaviour, shown to a person) — a
- * service-side retry doubles the wait before the human sees the failure and
- * doubles the spend when the failure is a rejected key.
+ * One finding, one prompt: the configured model first, then — only on the
+ * failures another model could survive — up to two live free alternates.
+ *
+ * Retries are still the CALLER's decision for the SAME model (the retry
+ * button is a product behaviour, shown to a person); what changed is that a
+ * single provider's bad moment no longer dead-ends the feature, because the
+ * free tier's 5xx/429 storms are per-model, not per-account.
  */
 export async function generateFix(finding: FixFinding): Promise<FixGeneration> {
   if (!serverEnv.fixesConfigured) return { ok: false, reason: 'unconfigured' }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-  timer.unref()
+  const primary = serverEnv.fixesModel || DEFAULT_MODEL
+  const first = await attemptModel(primary, finding)
+  if (first.ok) return first
+  if (!first.canFallback) return { ok: false, reason: first.reason }
 
-  let response: Response
-  try {
-    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${serverEnv.openrouterApiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: serverEnv.fixesModel || DEFAULT_MODEL,
-        messages: buildMessages(finding),
-        // A fix prompt is ~200 words; the ceiling exists so a runaway
-        // completion becomes a failure, not a bill.
-        max_tokens: 700,
-        temperature: 0.2,
-      }),
-      signal: controller.signal,
-    })
-  } catch {
-    return { ok: false, reason: 'network' }
-  } finally {
-    clearTimeout(timer)
+  let last: FixFailureReason = first.reason
+  for (const model of await discoverAlternateModels(primary)) {
+    const attempt = await attemptModel(model, finding)
+    if (attempt.ok) return attempt
+    if (!attempt.canFallback) return { ok: false, reason: attempt.reason }
+    last = attempt.reason
   }
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    // Server-side log only: the visitor gets the generic sentence, the
-    // operator gets the status and enough of the body to act on.
-    console.error('openrouter refused', response.status, body.slice(0, 300))
-    // The free tier throttles with 429; everything else (bad key, empty
-    // credits, model down) is still worth one more press before giving up.
-    if (response.status === 429) return { ok: false, reason: 'busy' }
-    return { ok: false, reason: 'upstream' }
-  }
-
-  let payload: unknown
-  try {
-    payload = await response.json()
-  } catch {
-    return { ok: false, reason: 'upstream' }
-  }
-
-  const content = (payload as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message
-    ?.content
-  if (typeof content !== 'string' || content.trim() === '') {
-    return { ok: false, reason: 'upstream' }
-  }
-
-  return { ok: true, prompt: content.trim() }
+  return { ok: false, reason: last }
 }
