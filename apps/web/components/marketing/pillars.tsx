@@ -1,4 +1,5 @@
 import { Section, SectionHeading } from './section.tsx'
+import { PillarWaves } from './pillar-waves.tsx'
 import { pillarSummaries, TOTAL_CHECKS } from '@/lib/pillars.ts'
 
 /**
@@ -24,26 +25,34 @@ export function Pillars() {
 
       <ul className="mt-12 grid gap-px overflow-hidden border border-line bg-line sm:grid-cols-2 lg:grid-cols-3">
         {pillars.map((pillar) => (
-          <li key={pillar.category} className="flex min-w-0 flex-col bg-canvas p-7">
-            <div className="flex items-baseline justify-between gap-3">
-              <h3 className="text-lg font-semibold tracking-tight">{pillar.label}</h3>
-              <span className="font-mono text-lg font-semibold text-ink tabular-nums">{pillar.count}</span>
+          <li key={pillar.category} className="relative min-w-0 overflow-hidden bg-canvas">
+            <PillarWaves />
+            {/*
+             * The card's content sits above the wave field: both are
+             * positioned, so DOM order paints the copy on top — no z-index
+             * contest to maintain.
+             */}
+            <div className="relative flex min-w-0 flex-col p-7">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="text-lg font-semibold tracking-tight">{pillar.label}</h3>
+                <span className="font-mono text-lg font-semibold text-ink tabular-nums">{pillar.count}</span>
+              </div>
+
+              <p className="mt-2.5 text-[15px] leading-relaxed text-ink/70 text-pretty">{pillar.question}</p>
+
+              <ul className="mt-5 flex flex-col gap-2 border-t border-line pt-5">
+                {pillar.examples.map((example) => (
+                  <li key={example} className="font-mono text-sm text-muted">
+                    {example}
+                  </li>
+                ))}
+                {pillar.count > pillar.examples.length && (
+                  <li className="font-mono text-sm font-medium text-ink">
+                    +{pillar.count - pillar.examples.length} more
+                  </li>
+                )}
+              </ul>
             </div>
-
-            <p className="mt-2.5 text-[15px] leading-relaxed text-ink/70 text-pretty">{pillar.question}</p>
-
-            <ul className="mt-5 flex flex-col gap-2 border-t border-line pt-5">
-              {pillar.examples.map((example) => (
-                <li key={example} className="font-mono text-sm text-muted">
-                  {example}
-                </li>
-              ))}
-              {pillar.count > pillar.examples.length && (
-                <li className="font-mono text-sm font-medium text-ink">
-                  +{pillar.count - pillar.examples.length} more
-                </li>
-              )}
-            </ul>
           </li>
         ))}
       </ul>
