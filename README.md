@@ -23,16 +23,16 @@ cd packages/checks && SCANLYFIX_LIVE=1 pnpm test   # + live end-to-end smoke
 ### Web App
 
 ```sh
-pnpm dev                                # web app (:3000) + fix tier (:8082) together
+pnpm dev                                # web app on :3000
 pnpm build                              # production build
 pnpm test                               # vitest tests
 ```
 
-The AutoFix page and every Fix button call the fix tier (`apps/fixes`, port
-8082) — the process that holds the `OPENROUTER_API_KEY` and talks to the model.
-Without it, Fix buttons show "Could not reach the fix writer" instead of a
-prompt, so start both with `pnpm dev` from the root (or
-`pnpm --filter @scanlyfix/fixes dev` alongside the web app).
+The AutoFix page and every Fix button generate their prompt in the web
+backend: `apps/web/lib/fixes.ts` calls OpenRouter directly with the master
+prompt and the finding. It needs `OPENROUTER_API_KEY` (and optionally
+`FIXES_MODEL`) in `apps/web/.env` — without them the Fix buttons explain
+themselves instead of producing a prompt. No second service to run.
 
 
 

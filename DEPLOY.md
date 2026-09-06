@@ -103,15 +103,14 @@ The UI shows a scan that never finishes, with no error anywhere.
 
 ---
 
-## 5b. Fixes — the AI fix-prompt tier
+## 5b. Fixes — AI fix prompts
 
-`apps/fixes` turns one finding into the prompt that fixes it. It needs two
-secrets, both required — the process refuses to start without either:
+The web backend turns one finding into the prompt that fixes it:
+`apps/web/lib/fixes.ts` calls OpenRouter directly with the master prompt and
+the finding. One secret on the web app:
 
-- `OPENROUTER_API_KEY` — held by THIS service only. The web app never sees it.
-- `SCANLYFIX_FIXES_TOKEN` — a shared secret you choose (`openssl rand -hex 24`),
-  given to the web app as `SCANLYFIX_FIXES_TOKEN` alongside
-  `SCANLYFIX_FIXES_URL` (the service's internal URL; default port 8082).
+- `OPENROUTER_API_KEY` — server-only; it is read in API routes and never
+  reaches the browser bundle.
 
 `FIXES_MODEL` overrides the model — it defaults to `minimax/minimax-m3:free`
 on OpenRouter. Generation failures surface in the UI as a retry button, so a

@@ -14,7 +14,7 @@ describe('fixFailure', () => {
     const failure = fixFailure('unconfigured')
     expect(failure.status).toBe(503)
     expect(failure.body.retryable).toBe(false)
-    expect(failure.body.error).toMatch(/SCANLYFIX_FIXES_URL/)
+    expect(failure.body.error).toMatch(/OPENROUTER_API_KEY/)
   })
 
   it('every reason carries a sentence a person can act on', () => {
