@@ -64,6 +64,7 @@ export function PillarScores({ scores }: { scores: ScanScores }) {
                 aria-label={LABEL[pillar]}
               >
                 <div
+                  {...(value > 0 ? { 'data-bar': '' } : {})}
                   className="h-full"
                   style={{ width: `${value}%`, backgroundColor: scoreColor(value) }}
                 />

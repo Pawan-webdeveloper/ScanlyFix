@@ -16,6 +16,8 @@ import {
 } from '@scanlyfix/db'
 import { getViewer, requireUser } from '@/lib/authz.ts'
 import { serverEnv } from '@/lib/env.ts'
+import { PageHeader } from '@/components/console/page-header.tsx'
+import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 import { ScanRepoButton } from './scan-repo-button.tsx'
 
@@ -85,18 +87,45 @@ export default async function FeedPage({
 
   return (
     <div className="console flex min-h-dvh flex-col bg-c-bg text-c-ink">
-      <TopBar />
+      <PageHeader
+        title="Feed"
+        actions={
+          hasInstallations && githubUrl ? (
+            <a
+              href={githubUrl}
+              data-press=""
+              className="rounded-full bg-c-soft px-4 py-1.5 text-[12px] font-medium text-c-muted transition-colors hover:bg-c-line hover:text-c-ink"
+            >
+              + Connect another
+            </a>
+          ) : null
+        }
+      />
 
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-12 px-6 py-10 sm:px-10 sm:py-14">
+      {/*
+       * The console container: same width, gutter and vertical rhythm as the
+       * dashboard, so moving between the two pages never re-learns the room.
+       */}
+      <div
+        data-motion-scope="feed"
+        className="mx-auto flex w-full max-w-[1200px] flex-col gap-8 px-6 py-8 sm:px-10 sm:py-10"
+      >
+        <PageMotion scope="feed" />
+
         {/* Error banner — shown when the GitHub callback reports a problem */}
         {errorMessage && (
-          <div className="rounded-xl border border-red-300/60 bg-red-50 px-5 py-4 text-[14px] leading-relaxed text-red-800">
+          <div
+            role="alert"
+            className="rounded-xl border border-red-300/60 bg-red-50 px-5 py-4 text-[14px] leading-relaxed text-red-800"
+          >
             {errorMessage}
           </div>
         )}
-        {/* Connect GitHub CTA — shown when no installations exist */}
+        {/* Connect GitHub CTA — shown when no installations exist.
+            Above the fold on the account it is made for, so its entrance is
+            CSS at first paint, not the scroll-watched island. */}
         {!hasInstallations && githubUrl && (
-          <section className="relative overflow-hidden rounded-2xl border border-c-line/60 bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          <section className="console-enter relative overflow-hidden rounded-2xl border border-c-line/60 bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
             <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-c-gradient-sky/30 blur-3xl" />
             <div className="pointer-events-none absolute -left-16 bottom-0 h-48 w-48 rounded-full bg-c-gradient-lavender/25 blur-3xl" />
             <div className="relative px-8 py-12 text-center sm:px-12">
@@ -112,6 +141,7 @@ export default async function FeedPage({
               </p>
               <a
                 href={githubUrl}
+                data-press=""
                 className="mt-8 inline-flex items-center gap-2.5 rounded-full bg-c-ink px-7 py-3 text-[14px] font-medium text-c-brand-ink transition-opacity hover:opacity-90"
               >
                 <Icon name="repo" size={16} className="text-c-brand-ink" />
@@ -122,15 +152,15 @@ export default async function FeedPage({
         )}
 
         {/* Repositories */}
-        <section id="repositories">
-          <div className="mb-4 flex items-end justify-between gap-4">
+        <section id="repositories" data-reveal="">
+          <div data-reveal-item="" className="mb-4 flex items-end justify-between gap-4">
             <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
               Repositories
             </h2>
             {hasInstallations && githubUrl && (
               <a
                 href={githubUrl}
-                className="rounded-full bg-c-soft px-4 py-1.5 text-[12px] font-medium text-c-muted transition-colors hover:bg-c-line hover:text-c-ink"
+                className="rounded-full bg-c-soft px-4 py-1.5 text-[12px] font-medium text-c-muted transition-colors hover:bg-c-line hover:text-c-ink sm:hidden"
               >
                 + Connect another
               </a>
@@ -138,7 +168,10 @@ export default async function FeedPage({
           </div>
 
           {repos.length === 0 ? (
-            <div className="rounded-xl border border-c-line/60 bg-c-card p-12 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+            <div
+              data-reveal-item=""
+              className="rounded-xl border border-c-line/60 bg-c-card p-12 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+            >
               <p className="text-[16px] font-medium text-c-ink">No repositories connected</p>
               <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-c-muted text-pretty">
                 {githubUrl
@@ -149,7 +182,11 @@ export default async function FeedPage({
           ) : (
             <ul className="rounded-xl border border-c-line/60 bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
               {reposWithScans.map(({ repo, latestScan }, index) => (
-                <li key={repo.id} className={index === 0 ? '' : 'border-t border-c-line/60'}>
+                <li
+                  key={repo.id}
+                  data-reveal-item=""
+                  className={index === 0 ? '' : 'border-t border-c-line/60'}
+                >
                   <div className="flex items-center gap-4 px-6 py-5">
                     <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-c-soft text-c-muted">
                       <Icon name="repo" size={18} />
@@ -167,7 +204,10 @@ export default async function FeedPage({
                     <div className="hidden shrink-0 text-right sm:block">
                       {latestScan ? (
                         <>
-                          <p className={`console-num text-[20px] font-light tracking-tight ${scoreTone(latestScan.scores?.overall ?? null)}`}>
+                          <p
+                            data-count={latestScan.scores?.overall != null ? String(latestScan.scores.overall) : undefined}
+                            className={`console-num text-[20px] font-light tracking-tight ${scoreTone(latestScan.scores?.overall ?? null)}`}
+                          >
                             {latestScan.scores?.overall ?? '—'}
                           </p>
                           <p className="text-[12px] text-c-muted">
@@ -190,14 +230,15 @@ export default async function FeedPage({
 
         {/* Installation list — when multiple installations exist */}
         {installations.length > 1 && (
-          <section>
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
+          <section data-reveal="">
+            <h2 data-reveal-item="" className="mb-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
               Connected accounts
             </h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {installations.map((inst) => (
                 <div
                   key={inst.id}
+                  data-reveal-item=""
                   className="rounded-xl border border-c-line/60 bg-c-card p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
                 >
                   <div className="flex items-center gap-3">
@@ -218,15 +259,5 @@ export default async function FeedPage({
         )}
       </div>
     </div>
-  )
-}
-
-function TopBar() {
-  return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-c-line/60 bg-c-bg/80 backdrop-blur-md px-6 sm:px-10">
-      <div className="min-w-0 pl-12 lg:pl-0">
-        <p className="truncate text-[15px] font-medium text-c-ink">Feed</p>
-      </div>
-    </header>
   )
 }

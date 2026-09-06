@@ -24,6 +24,8 @@ import { getViewer, requireUser } from '@/lib/authz.ts'
 import { entitlementsFor } from '@/lib/entitlements.ts'
 import { redactFindings, type PublicFinding } from '@/lib/redact.ts'
 import { FixButton } from '@/components/scan/fix-button.tsx'
+import { PageHeader } from '@/components/console/page-header.tsx'
+import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 
 export const metadata = { title: 'AutoFix' }
@@ -103,17 +105,22 @@ export default async function FixesPage() {
 
   return (
     <div className="console flex min-h-dvh flex-col bg-c-bg text-c-ink">
-      <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-c-line/60 bg-c-bg/80 backdrop-blur-md px-6 sm:px-10">
-        <div className="min-w-0 pl-12 lg:pl-0">
-          <p className="truncate text-[15px] font-medium text-c-ink">AutoFix</p>
-        </div>
-      </header>
+      <PageHeader title="AutoFix" />
 
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-10 px-6 py-10 sm:px-10 sm:py-14">
-        <section>
-          <h1 className="text-[28px] font-light leading-tight tracking-[-0.02em] text-c-ink">
+      {/*
+       * The console container rhythm, shared with the dashboard and the feed:
+       * one 1200px column, one gutter, one breathing pace across the console.
+       */}
+      <div
+        data-motion-scope="fixes"
+        className="mx-auto flex w-full max-w-[1200px] flex-col gap-8 px-6 py-8 sm:px-10 sm:py-10"
+      >
+        <PageMotion scope="fixes" />
+
+        <section className="console-enter">
+          <h2 className="text-[28px] font-light leading-tight tracking-[-0.02em] text-c-ink">
             Every issue. One prompt away from fixed.
-          </h1>
+          </h2>
           <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-c-body">
             {openCount === 0
               ? 'Nothing to fix yet — scan a site and its findings land here.'
@@ -122,7 +129,10 @@ export default async function FixesPage() {
         </section>
 
         {groups.length === 0 && (
-          <section className="rounded-xl border border-c-line/60 bg-c-card p-12 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          <section
+            className="console-enter rounded-xl border border-c-line/60 bg-c-card p-12 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+            style={{ animationDelay: '90ms' }}
+          >
             <p className="text-[16px] font-medium text-c-ink">No issues to fix yet</p>
             <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-c-muted text-pretty">
               Run a scan from the dashboard and every finding shows up here with its
@@ -130,6 +140,7 @@ export default async function FixesPage() {
             </p>
             <Link
               href="/dashboard"
+              data-press=""
               className="mt-6 inline-flex items-center gap-2 rounded-full bg-c-ink px-6 py-2.5 text-[13px] font-medium text-c-brand-ink transition-opacity hover:opacity-90"
             >
               <Icon name="home" size={14} />
@@ -139,9 +150,9 @@ export default async function FixesPage() {
         )}
 
         {groups.map((group) => (
-          <section key={group.scanId}>
-            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-[14px] font-medium text-c-ink">{group.host}</h2>
+          <section key={group.scanId} data-reveal="">
+            <div data-reveal-item="" className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-[14px] font-medium text-c-ink">{group.host}</h3>
               <p className="text-[12px] text-c-muted">
                 scanned {group.scannedAt} ·{' '}
                 <Link href={`/scan/${group.scanId}`} className="hover:text-c-ink">
@@ -149,7 +160,10 @@ export default async function FixesPage() {
                 </Link>
               </p>
             </div>
-            <ul className="overflow-hidden rounded-xl border border-c-line/60 bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+            <ul
+              data-reveal-item=""
+              className="overflow-hidden rounded-xl border border-c-line/60 bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+            >
               {group.rows.map((row, index) => (
                 <li
                   key={`${row.finding.checkId}-${index}`}

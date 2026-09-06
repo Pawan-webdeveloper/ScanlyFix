@@ -34,7 +34,7 @@ export function AnswerEngines() {
           <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
             {checks.length} checks in this pillar
           </p>
-          <ul className="mt-4 flex flex-col">
+          <ul data-motion="stagger" className="mt-4 flex flex-col">
             {checks.map((title) => (
               <li
                 key={title}

@@ -664,3 +664,63 @@ body {
 .console-num {
   font-variant-numeric: tabular-nums;
 }
+
+/*
+ * The console's above-fold entrance.
+ *
+ * CSS on purpose, not JS: it starts at FIRST PAINT, before hydration, so the
+ * page animates in from the first frame instead of flashing its final state
+ * and dipping once React arrives. It is the same trick the hero entrances
+ * use, scoped to the console — the below-fold sections are handled by the
+ * PageMotion island (motion.tsx), which animates when a section is reached.
+ *
+ * `both` fill means the pre-delay state is the keyframe's start; call sites
+ * that chain sections stagger them with an inline animation-delay.
+ */
+@keyframes console-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.console-enter {
+  animation: console-enter 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/*
+ * The global reduced-motion rule collapses durations but not DELAYS — under
+ * `both` fill a delayed entrance would sit invisible and then pop. Opt out
+ * entirely, exactly as the hero entrances above do: no animation means the
+ * natural, final state.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .console-enter {
+    animation: none !important;
+  }
+}
+
+/*
+ * Meter fills grow from their own left edge when the PageMotion island
+ * animates their scaleX; without this origin they would grow from the centre
+ * and read as a glitch rather than a fill.
+ */
+[data-bar] {
+  transform-origin: 0 50%;
+}
+
+/*
+ * The landing page's FAQ accordion expands through a grid row rather than
+ * snapping. home-motion.tsx pins the collapsed/expanded value inline around
+ * the open/close and lets THIS transition do the tweening — a bounded state
+ * change is CSS's job, not an animation engine's. The global
+ * prefers-reduced-motion rule above collapses the duration automatically.
+ */
+[data-motion-faq-answer] {
+  display: grid;
+  transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}

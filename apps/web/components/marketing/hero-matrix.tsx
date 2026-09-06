@@ -10,6 +10,11 @@ import { useEffect, useRef } from 'react'
  * being caught. It reads as a machine reading a page, which is what the
  * product does; a fast cascade would read as a screensaver.
  *
+ * The field also watches the pointer: cells under the cursor ignite and decay
+ * through the same glow path, so the machine appears to look where the
+ * visitor looks. It is the one interactive beat on a page of entrances, and
+ * it reuses the tick's own decay rather than adding a loop.
+ *
  * Deliberately not a requestAnimationFrame loop. Only a few dozen cells change
  * per tick, so a timer that clears and repaints just those rectangles costs a
  * fraction of a full-canvas repaint at 60fps — and this is decoration that
@@ -190,6 +195,34 @@ export function HeroMatrix({ className }: { className?: string }) {
       else stop()
     }
 
+    /** Cells under the pointer ignite and decay through the normal tick. */
+    const POINTER_RADIUS = 2
+
+    function onPointerMove(event: PointerEvent): void {
+      const g = grid
+      // timer === null means the field is at rest (off screen, hidden tab, or
+      // reduced motion) — a static field should not light up for a cursor.
+      if (!g || timer === null) return
+      const rect = canvas!.getBoundingClientRect()
+      const col = Math.floor((event.clientX - rect.left) / g.cellW)
+      const row = Math.floor((event.clientY - rect.top) / g.cellH)
+      if (col < 0 || row < 0 || col >= g.cols || row >= g.rows) return
+
+      for (let dr = -POINTER_RADIUS; dr <= POINTER_RADIUS; dr++) {
+        const r = row + dr
+        if (r < 0 || r >= g.rows) continue
+        for (let dc = -POINTER_RADIUS; dc <= POINTER_RADIUS; dc++) {
+          if (dc * dc + dr * dr > POINTER_RADIUS * POINTER_RADIUS + 1) continue
+          const c = col + dc
+          if (c < 0 || c >= g.cols) continue
+          const index = r * g.cols + c
+          if (!g.chars[index]) continue
+          g.glow[index] = GLOW_TICKS
+          paintCell(g, index)
+        }
+      }
+    }
+
     layout()
     sync()
 
@@ -214,6 +247,7 @@ export function HeroMatrix({ className }: { className?: string }) {
     })
     const measured = canvas.parentElement ?? canvas
     resizeObserver.observe(measured)
+    measured.addEventListener('pointermove', onPointerMove)
 
     const onVisibility = () => sync()
     const onMotionChange = () => {
@@ -231,6 +265,7 @@ export function HeroMatrix({ className }: { className?: string }) {
       if (resizeTimer !== null) clearTimeout(resizeTimer)
       observer.disconnect()
       resizeObserver.disconnect()
+      measured.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('visibilitychange', onVisibility)
       reduced.removeEventListener('change', onMotionChange)
       dark.removeEventListener('change', onThemeChange)

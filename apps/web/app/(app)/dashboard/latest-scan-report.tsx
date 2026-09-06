@@ -54,12 +54,13 @@ export async function LatestScanReport({
   const host = hostOf(scan.url)
 
   return (
-    <section aria-label="Latest report">
+    <section aria-label="Latest report" className="console-enter" data-reveal="">
       <div className="overflow-hidden rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
         <header className="flex items-center justify-between gap-4 border-b border-c-line px-6 py-4">
           <h2 className="text-sm font-medium text-c-ink">Latest report</h2>
           <Link
             href={`/scan/${scan.id}`}
+            data-press=""
             className="rounded-md border border-c-line bg-c-card px-3 py-1.5 text-[12px] font-medium text-c-ink
                        transition-colors hover:bg-c-soft"
           >

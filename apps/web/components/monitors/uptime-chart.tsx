@@ -22,7 +22,10 @@ export function UptimeChart({ events }: { events: ReadonlyArray<{ ts: Date | str
 
   return (
     <div>
-      <div className="flex h-10 items-stretch gap-[2px]" aria-hidden="true">
+      {/* data-motion="bars" lets the landing page's motion island grow the
+          strip in when it is reached; inert wherever no island is mounted
+          (the console and the status pages render it plain). */}
+      <div data-motion="bars" className="flex h-10 items-stretch gap-[2px]" aria-hidden="true">
         {days.map((day) => (
           <div
             key={day.date}

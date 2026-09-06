@@ -3,13 +3,13 @@
 /**
  * The Fix button: one finding in, one work order out.
  *
- * Clicking asks the backend (which asks the fix tier, which asks the model)
- * for a prompt that fixes this specific finding. The prompt arrives revealed
- * and copyable. When generation fails transiently — the free model tier
- * throttles, hiccups, times out — the button becomes a retry, because trying
- * again is exactly what failed and nothing else. A paywall answer (403) or an
- * unconfigured deployment is NOT retryable: no amount of retrying changes it,
- * so those render as a sentence instead.
+ * Clicking asks the backend, which calls the model directly for a prompt that
+ * fixes this specific finding. The prompt arrives revealed and copyable. When
+ * generation fails transiently — the free model tier throttles, hiccups,
+ * times out — the button becomes a retry, because trying again is exactly what
+ * failed and nothing else. A paywall answer (403) or an unconfigured
+ * deployment is NOT retryable: no amount of retrying changes it, so those
+ * render as a sentence instead.
  *
  * Why the prompt is not on the page already: it is written per request by the
  * model against the finding's evidence, which is the difference between a
@@ -58,7 +58,7 @@ export function FixButton({ scanId, checkId }: { scanId: string; checkId: string
         body && typeof body === 'object' && 'retryable' in body && (body as { retryable: unknown }).retryable === true
       setState({ kind: 'error', message: detail, retryable: retryable === true || response.status >= 500 })
     } catch {
-      setState({ kind: 'error', message: 'Could not reach the fix writer. Check your connection and try again.', retryable: true })
+      setState({ kind: 'error', message: 'Could not reach the server. Check your connection and try again.', retryable: true })
     }
   }
 
@@ -93,9 +93,10 @@ export function FixButton({ scanId, checkId }: { scanId: string; checkId: string
       <button
         type="button"
         onClick={() => void generate()}
+        data-press=""
         disabled={state.kind === 'loading'}
         className="inline-flex items-center gap-1.5 border border-accent bg-accent-soft px-3 py-1.5 text-xs font-semibold
-                   text-accent-ink transition-colors hover:bg-accent hover:text-accent-ink disabled:opacity-60"
+                   text-ink transition-colors hover:bg-accent hover:text-accent-ink disabled:opacity-60"
       >
         {state.kind === 'loading' && (
           <span

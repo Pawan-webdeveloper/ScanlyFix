@@ -48,7 +48,11 @@ export function SectionHeading({
   lead?: string
 }) {
   return (
-    <header>
+    // The data-motion attributes are the landing page's motion contract
+    // (components/marketing/home-motion.tsx): the island reveals the header's
+    // children as one beat and reads index/name for the scan rail's label.
+    // They are inert wherever no island is mounted.
+    <header data-motion="heading" data-motion-index={index} data-motion-name={eyebrow}>
       <LabeledRule index={index} label={eyebrow} />
 
       <h2 className="mt-6 max-w-[24ch] text-2xl font-semibold tracking-[-0.03em] text-balance sm:text-[34px] sm:leading-[1.1]">

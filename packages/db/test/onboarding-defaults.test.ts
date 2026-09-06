@@ -8,7 +8,7 @@
  *   - DEFAULT_MONITOR_ENABLED — uptime/domain/web_vitals on, rescan off
  *
  * Mocked-DB coverage:
- *   - ensureDefaultMonitors: idempotent upsert on (projectId, type)
+ *   - ensureDefaultMonitors: idempotent insert-or-skip on (projectId, type)
  *   - enableRescanMonitorIfPresent: flips only when enabled=false
  *   - createProjectWithMonitors: transactional; limit-reached returns
  *     the same shape as createProject
@@ -118,7 +118,7 @@ describe('ensureDefaultMonitors', () => {
     expect(firstValues['intervalS']).toBe(60)
   })
 
-  it('uses onConflictDoNothing on conflict so an existing row is left alone', async () => {
+  it('leaves an existing row alone via DO NOTHING on (projectId, type)', async () => {
     for (let i = 0; i < DEFAULT_MONITOR_TYPES.length; i += 1) {
       mockReturning.mockResolvedValueOnce([{ id: `m${i}` }])
     }
@@ -130,7 +130,19 @@ describe('ensureDefaultMonitors', () => {
     await fn('proj-1')
 
     expect(mockOnConflictDoNothing).toHaveBeenCalledTimes(DEFAULT_MONITOR_TYPES.length)
+    const conflictArg = mockOnConflictDoNothing.mock.calls[0]?.[0] as {
+      target?: unknown
+    }
+    // Drizzle's column objects are not stringly inspectable here — verifying
+    // the conflict clause carried an explicit target is enough to catch the
+    // regression where the clause is dropped and a retry would duplicate rows.
+    expect(conflictArg.target).toBeDefined()
+    // The owner's customised enabled/intervalS must never be overwritten, so
+    // the conflict clause carries no SET at all — and an empty
+    // onConflictDoUpdate set is not an alternative: Drizzle throws
+    // "No values to set" on it, which is what broke every project creation.
   })
+
 
   it('passes the rescan row with enabled=false', async () => {
     for (let i = 0; i < DEFAULT_MONITOR_TYPES.length; i += 1) {

@@ -66,7 +66,7 @@ export function Monitoring() {
         </figcaption>
       </figure>
 
-      <dl className="mt-10 grid gap-x-12 gap-y-10 sm:grid-cols-2">
+      <dl data-motion="stagger" className="mt-10 grid gap-x-12 gap-y-10 sm:grid-cols-2">
         {CAPABILITIES.map(({ title, body }) => (
           <div key={title}>
             <dt className="text-lg font-semibold tracking-tight">{title}</dt>

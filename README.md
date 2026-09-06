@@ -23,11 +23,16 @@ cd packages/checks && SCANLYFIX_LIVE=1 pnpm test   # + live end-to-end smoke
 ### Web App
 
 ```sh
-cd apps/web
-pnpm dev                                # Next.js dev server
+pnpm dev                                # web app on :3000
 pnpm build                              # production build
 pnpm test                               # vitest tests
 ```
+
+The AutoFix page and every Fix button generate their prompt in the web
+backend: `apps/web/lib/fixes.ts` calls OpenRouter directly with the master
+prompt and the finding. It needs `OPENROUTER_API_KEY` (and optionally
+`FIXES_MODEL`) in `apps/web/.env` — without them the Fix buttons explain
+themselves instead of producing a prompt. No second service to run.
 
 
 

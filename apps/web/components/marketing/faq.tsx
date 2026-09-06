@@ -76,14 +76,20 @@ export function Faq() {
     <Section id="faq">
       <SectionHeading index={8} eyebrow="Questions" title="Before you paste your domain" />
 
-      <div className="mt-10 border-t border-line">
+      {/* The rows cascade in once; each accordion expands with an animated
+          grid row (home-motion.tsx) instead of snapping. The wrapper defaults
+          to an open grid so the no-JavaScript toggle behaves exactly as
+          before — the inline 0fr→1fr exists only mid-animation. */}
+      <div data-motion="stagger" className="mt-10 border-t border-line">
         {QA.map(({ q, a }) => (
-          <details key={q} className="group border-b border-line">
+          <details key={q} data-motion-faq="" className="group border-b border-line">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-6 py-5 text-lg font-semibold tracking-tight">
               {q}
               <Chevron />
             </summary>
-            <p className="max-w-[70ch] pb-5 text-[15px] leading-relaxed text-ink/70 text-pretty">{a}</p>
+            <div data-motion-faq-answer="" className="grid overflow-hidden">
+              <p className="min-h-0 max-w-[70ch] pb-5 text-[15px] leading-relaxed text-ink/70 text-pretty">{a}</p>
+            </div>
           </details>
         ))}
       </div>
