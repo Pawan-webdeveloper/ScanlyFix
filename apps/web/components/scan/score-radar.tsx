@@ -34,13 +34,9 @@ const chartConfig = {
 
 export function ScoreRadar({ data, overall }: { data: RadarAxis[]; overall: number }) {
   return (
-    <figure className="flex w-full shrink-0 flex-col items-center gap-1 sm:w-[420px]">
-      <Chart config={chartConfig} className="aspect-square w-full">
-        <RadarChart
-          data={data}
-          margin={{ top: 16, right: 32, bottom: 16, left: 32 }}
-          outerRadius="75%"
-        >
+    <figure className="flex flex-col items-center gap-1">
+      <Chart config={chartConfig} className="mx-auto aspect-square w-full max-w-[320px]">
+        <RadarChart data={data} margin={{ top: 12, right: 24, bottom: 12, left: 24 }} outerRadius="85%">
           <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
           <PolarAngleAxis
             dataKey="label"
