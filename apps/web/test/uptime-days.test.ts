@@ -13,10 +13,13 @@
  *   - Empty input
  *   - Mixed sequences
  *   - Boundary conditions
+ *   - 90-day window always returns exactly N entries
+ *   - Empty days stay visible in the window
+ *   - summarize() / formatDowntime() / formatShortDate() helpers
  */
 
 import { describe, expect, it } from 'vitest'
-import { toDays, type UptimeDay } from '../components/monitors/uptime-days.ts'
+import { formatDowntime, formatShortDate, summarize, toDays, type UptimeDay } from '../components/monitors/uptime-days.ts'
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +33,9 @@ describe('toDays — UTC day grouping', () => {
       at('2026-08-24T01:00:00Z', true),
       at('2026-08-24T23:00:00Z', true),
     ])
-    expect(days).toEqual([{ date: '2026-08-24', ok: 2, failed: 0 }])
+    expect(days.filter((d) => d.ok + d.failed > 0)).toEqual([
+      { date: '2026-08-24', state: 'ok', ok: 2, failed: 0, downMs: 0 },
+    ])
   })
 
   it('separates events across UTC midnight', () => {
@@ -38,9 +43,10 @@ describe('toDays — UTC day grouping', () => {
       at('2026-08-24T23:00:00Z', true),
       at('2026-08-25T01:00:00Z', true),
     ])
-    expect(days).toHaveLength(2)
-    expect(days[0]?.date).toBe('2026-08-24')
-    expect(days[1]?.date).toBe('2026-08-25')
+    const active = days.filter((d) => d.ok + d.failed > 0)
+    expect(active).toHaveLength(2)
+    expect(active[0]?.date).toBe('2026-08-24')
+    expect(active[1]?.date).toBe('2026-08-25')
   })
 
   it('handles events near UTC midnight correctly', () => {
@@ -49,7 +55,8 @@ describe('toDays — UTC day grouping', () => {
       at('2026-08-24T23:59:59Z', true),
       at('2026-08-25T00:00:01Z', true),
     ])
-    expect(days).toHaveLength(2)
+    const active = days.filter((d) => d.ok + d.failed > 0)
+    expect(active).toHaveLength(2)
   })
 })
 
@@ -62,7 +69,14 @@ describe('toDays — success/failure counting', () => {
       at('2026-08-24T02:00:00Z', false),
       at('2026-08-24T03:00:00Z', false),
     ])
-    expect(days[0]).toEqual({ date: '2026-08-24', ok: 1, failed: 2 })
+    const active = days.filter((d) => d.ok + d.failed > 0)
+    expect(active[0]).toEqual({
+      date: '2026-08-24',
+      state: 'down',
+      ok: 1,
+      failed: 2,
+      downMs: 2 * 60_000,
+    })
   })
 
   it('handles all successes in a day', () => {
@@ -71,7 +85,14 @@ describe('toDays — success/failure counting', () => {
       at('2026-08-24T02:00:00Z', true),
       at('2026-08-24T03:00:00Z', true),
     ])
-    expect(days[0]).toEqual({ date: '2026-08-24', ok: 3, failed: 0 })
+    const active = days.filter((d) => d.ok + d.failed > 0)
+    expect(active[0]).toEqual({
+      date: '2026-08-24',
+      state: 'ok',
+      ok: 3,
+      failed: 0,
+      downMs: 0,
+    })
   })
 
   it('handles all failures in a day', () => {
@@ -79,7 +100,14 @@ describe('toDays — success/failure counting', () => {
       at('2026-08-24T01:00:00Z', false),
       at('2026-08-24T02:00:00Z', false),
     ])
-    expect(days[0]).toEqual({ date: '2026-08-24', ok: 0, failed: 2 })
+    const active = days.filter((d) => d.ok + d.failed > 0)
+    expect(active[0]).toEqual({
+      date: '2026-08-24',
+      state: 'down',
+      ok: 0,
+      failed: 2,
+      downMs: 2 * 60_000,
+    })
   })
 })
 
@@ -93,11 +121,8 @@ describe('toDays — oldest-first ordering', () => {
       at('2026-08-22T00:00:00Z', true),
       at('2026-08-23T00:00:00Z', true),
     ])
-    expect(days.map((d) => d.date)).toEqual([
-      '2026-08-22',
-      '2026-08-23',
-      '2026-08-24',
-    ])
+    const active = days.filter((d) => d.ok + d.failed > 0).map((d) => d.date)
+    expect(active).toEqual(['2026-08-22', '2026-08-23', '2026-08-24'])
   })
 
   it('handles reverse chronological input', () => {
@@ -106,17 +131,21 @@ describe('toDays — oldest-first ordering', () => {
       at('2026-08-24T00:00:00Z', true),
       at('2026-08-23T00:00:00Z', true),
     ])
-    expect(days.map((d) => d.date)).toEqual([
-      '2026-08-23',
-      '2026-08-24',
-      '2026-08-25',
-    ])
+    const active = days.filter((d) => d.ok + d.failed > 0).map((d) => d.date)
+    expect(active).toEqual(['2026-08-23', '2026-08-24', '2026-08-25'])
   })
 })
 
 // ─── Windowing (days parameter) ───────────────────────────────────────────────
 
 describe('toDays — windowing', () => {
+  it('returns exactly 90 entries (no drop of empty days)', () => {
+    const days = toDays([], 90)
+    expect(days).toHaveLength(90)
+    expect(days[0]?.state).toBe('empty')
+    expect(days[89]?.state).toBe('empty')
+  })
+
   it('keeps only the most recent N days', () => {
     const events = Array.from({ length: 120 }, (_, i) =>
       at(new Date(Date.UTC(2026, 0, 1 + i)).toISOString(), true),
@@ -147,20 +176,29 @@ describe('toDays — windowing', () => {
 
 describe('toDays — serialized timestamps', () => {
   it('accepts ISO string timestamps', () => {
-    const days = toDays([{ ts: '2026-08-24T10:00:00.000Z', ok: true }])
-    expect(days[0]?.date).toBe('2026-08-24')
+    const days = toDays([{ ts: '2026-08-24T10:00:00.000Z', ok: true }], 1)
+    expect(days[0]).toEqual({
+      date: '2026-08-24',
+      state: 'ok',
+      ok: 1,
+      failed: 0,
+      downMs: 0,
+    })
   })
 
   it('accepts Date objects', () => {
-    const days = toDays([{ ts: new Date('2026-08-24T10:00:00Z'), ok: true }])
+    const days = toDays([{ ts: new Date('2026-08-24T10:00:00Z'), ok: true }], 1)
     expect(days[0]?.date).toBe('2026-08-24')
   })
 
   it('handles mixed Date and string timestamps', () => {
-    const days = toDays([
-      { ts: '2026-08-24T10:00:00Z', ok: true },
-      { ts: new Date('2026-08-24T11:00:00Z'), ok: true },
-    ])
+    const days = toDays(
+      [
+        { ts: '2026-08-24T10:00:00Z', ok: true },
+        { ts: new Date('2026-08-24T11:00:00Z'), ok: true },
+      ],
+      1,
+    )
     expect(days).toHaveLength(1)
     expect(days[0]?.ok).toBe(2)
   })
@@ -169,12 +207,16 @@ describe('toDays — serialized timestamps', () => {
 // ─── Empty input ──────────────────────────────────────────────────────────────
 
 describe('toDays — empty input', () => {
-  it('returns empty array for no events', () => {
-    expect(toDays([])).toEqual([])
+  it('returns a window of empty days', () => {
+    const days = toDays([])
+    expect(days).toHaveLength(90)
+    expect(days.every((d) => d.state === 'empty')).toBe(true)
   })
 
-  it('returns empty array with custom window for no events', () => {
-    expect(toDays([], 30)).toEqual([])
+  it('returns windowed empty days with custom window', () => {
+    const days = toDays([], 30)
+    expect(days).toHaveLength(30)
+    expect(days.every((d) => d.state === 'empty')).toBe(true)
   })
 })
 
@@ -182,13 +224,25 @@ describe('toDays — empty input', () => {
 
 describe('toDays — single event', () => {
   it('handles a single successful event', () => {
-    const days = toDays([at('2026-08-24T12:00:00Z', true)])
-    expect(days).toEqual([{ date: '2026-08-24', ok: 1, failed: 0 }])
+    const days = toDays([at('2026-08-24T12:00:00Z', true)], 1)
+    expect(days[0]).toEqual({
+      date: '2026-08-24',
+      state: 'ok',
+      ok: 1,
+      failed: 0,
+      downMs: 0,
+    })
   })
 
   it('handles a single failed event', () => {
-    const days = toDays([at('2026-08-24T12:00:00Z', false)])
-    expect(days).toEqual([{ date: '2026-08-24', ok: 0, failed: 1 }])
+    const days = toDays([at('2026-08-24T12:00:00Z', false)], 1)
+    expect(days[0]).toEqual({
+      date: '2026-08-24',
+      state: 'down',
+      ok: 0,
+      failed: 1,
+      downMs: 60_000,
+    })
   })
 })
 
@@ -205,49 +259,72 @@ describe('toDays — multi-day sequences', () => {
       at('2026-08-25T10:00:00Z', true),
       at('2026-08-26T10:00:00Z', true),
     ]
-    const days = toDays(events)
+    const days = toDays(events, 7)
     expect(days).toHaveLength(7)
     expect(days[0]?.date).toBe('2026-08-20')
     expect(days[6]?.date).toBe('2026-08-26')
   })
 
-  it('handles gaps in days (no events on some days)', () => {
+  it('keeps empty days visible in the window', () => {
     const events = [
       at('2026-08-20T10:00:00Z', true),
       // Aug 21-23: no events
       at('2026-08-24T10:00:00Z', true),
     ]
-    const days = toDays(events)
-    // Only days with events appear
-    expect(days).toHaveLength(2)
-    expect(days.map((d) => d.date)).toEqual(['2026-08-20', '2026-08-24'])
+    const days = toDays(events, 5)
+    expect(days).toHaveLength(5)
+    expect(days.map((d) => d.state)).toEqual(['ok', 'empty', 'empty', 'empty', 'ok'])
   })
 })
 
-// ─── Uptime calculation contract ──────────────────────────────────────────────
+// ─── summarize() ─────────────────────────────────────────────────────────────
 
-describe('toDays — uptime calculation contract', () => {
-  it('returns correct counts for uptime percentage calculation', () => {
-    // 3 ok, 1 failed on same day → 75% uptime for that day
-    const days = toDays([
-      at('2026-08-24T01:00:00Z', true),
-      at('2026-08-24T02:00:00Z', true),
-      at('2026-08-24T03:00:00Z', true),
-      at('2026-08-24T04:00:00Z', false),
-    ])
-    expect(days[0]).toEqual({ date: '2026-08-24', ok: 3, failed: 1 })
+describe('summarize() — legend counts', () => {
+  it('counts outage days', () => {
+    const days: UptimeDay[] = [
+      { date: '2026-08-01', state: 'ok', ok: 100, failed: 0, downMs: 0 },
+      { date: '2026-08-02', state: 'down', ok: 50, failed: 5, downMs: 300_000 },
+      { date: '2026-08-03', state: 'down', ok: 0, failed: 100, downMs: 6_000_000 },
+    ]
+    const summary = summarize(days)
+    expect(summary.outageCount).toBe(2)
+    expect(summary.noChecksCount).toBe(0)
   })
 
-  it('preserves counts across multiple days', () => {
-    const days = toDays([
-      at('2026-08-23T10:00:00Z', true),
-      at('2026-08-23T11:00:00Z', true),
-      at('2026-08-24T10:00:00Z', false),
-      at('2026-08-24T11:00:00Z', false),
-    ])
-    expect(days[0]?.ok).toBe(2)
-    expect(days[0]?.failed).toBe(0)
-    expect(days[1]?.ok).toBe(0)
-    expect(days[1]?.failed).toBe(2)
+  it('counts days with no events', () => {
+    const days: UptimeDay[] = [
+      { date: '2026-08-01', state: 'ok', ok: 100, failed: 0, downMs: 0 },
+      { date: '2026-08-02', state: 'empty', ok: 0, failed: 0, downMs: 0 },
+      { date: '2026-08-03', state: 'empty', ok: 0, failed: 0, downMs: 0 },
+    ]
+    const summary = summarize(days)
+    expect(summary.noChecksCount).toBe(2)
+    expect(summary.outageCount).toBe(0)
+  })
+})
+
+// ─── formatDowntime() ────────────────────────────────────────────────────────
+
+describe('formatDowntime()', () => {
+  it('formats hours and minutes', () => {
+    expect(formatDowntime(3_600_000 + 5 * 60_000)).toBe('1h 5m')
+  })
+  it('formats minutes and seconds', () => {
+    expect(formatDowntime(2 * 60_000 + 30_000)).toBe('2m 30s')
+  })
+  it('formats seconds only', () => {
+    expect(formatDowntime(45_000)).toBe('45s')
+  })
+  it('formats zero', () => {
+    expect(formatDowntime(0)).toBe('0s')
+  })
+})
+
+// ─── formatShortDate() ───────────────────────────────────────────────────────
+
+describe('formatShortDate()', () => {
+  it('formats as Mon D', () => {
+    expect(formatShortDate('2026-08-08')).toBe('Aug 8')
+    expect(formatShortDate('2026-09-06')).toBe('Sep 6')
   })
 })

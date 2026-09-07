@@ -78,9 +78,17 @@ describe('Recovery alert — email template', () => {
 })
 
 describe('Downtime alert — email template', () => {
-  it('subject includes host and "not responding"', () => {
+  it('subject includes host and HTTP status code', () => {
     const { subject } = render(
       alert('downtime', { streak: 3, statusCode: 503, detail: null }),
+    )
+
+    expect(subject).toBe('[DOWN] example.com — HTTP 503')
+  })
+
+  it('falls back to plain subject when status code is missing', () => {
+    const { subject } = render(
+      alert('downtime', { streak: 2, statusCode: null, detail: 'ETIMEDOUT' }),
     )
 
     expect(subject).toBe('example.com is not responding')
@@ -124,7 +132,8 @@ describe('Incident lifecycle — integration', () => {
     ).subject
 
     expect(downtimeSubject).not.toBe(recoverySubject)
-    expect(downtimeSubject).toContain('not responding')
+    // Downtime without a status code falls back to "is not responding"
+    expect(downtimeSubject).toContain('is not responding')
     expect(recoverySubject).toContain('[RESOLVED]')
   })
 

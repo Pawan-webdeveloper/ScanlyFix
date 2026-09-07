@@ -233,10 +233,25 @@ export async function deliverAlert(
   // The email is suppressed when the caller asked us to (per-monitor
   // notifyChannels is non-empty). When suppressed, we still mark the row
   // sent — the customer heard about it via the configured channels.
+  //
+  // Per-monitor alertEmail: if the alert payload carries an alertEmail override
+  // (set by uptime-probe from alertConfig.alertEmail), deliver to that address
+  // instead of the project owner's default email. This allows users to route
+  // alerts for a specific monitor to a different inbox (e.g. an ops alias).
+  const payloadAlertEmail =
+    alert.payload &&
+    typeof alert.payload === 'object' &&
+    'alertEmail' in alert.payload &&
+    typeof alert.payload.alertEmail === 'string' &&
+    alert.payload.alertEmail.includes('@')
+      ? alert.payload.alertEmail
+      : null
+  const toEmail = payloadAlertEmail ?? alert.recipientEmail
+
   let result: SendResult
   if (effectiveRouting.sendEmail) {
     result = await sendEmail({
-      to: alert.recipientEmail,
+      to: toEmail,
       subject,
       text,
       html: asHtml(text),

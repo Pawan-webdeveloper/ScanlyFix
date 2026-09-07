@@ -112,6 +112,44 @@ export async function sendEmail(message: Message): Promise<SendResult> {
   if (!response.ok) {
     const reason = providerMessage(body) ?? `HTTP ${response.status}`
     console.error('[email] rejected', { to: message.to, reason })
+
+    // If rejected due to domain not verified in Resend (common in local dev / staging),
+    // automatically fallback to Resend's onboarding sandbox sender so the user still gets the alert.
+    const fromAddress = from()
+    if (
+      !fromAddress.includes('onboarding@resend.dev') &&
+      (response.status === 403 ||
+        response.status === 422 ||
+        reason.toLowerCase().includes('domain') ||
+        reason.toLowerCase().includes('verify'))
+    ) {
+      console.warn('[email] Domain rejected, retrying with onboarding@resend.dev fallback')
+      try {
+        const fallbackRes = await fetch(ENDPOINT, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            from: 'ScanlyFix <onboarding@resend.dev>',
+            to: [message.to],
+            subject: message.subject,
+            text: message.text,
+            ...(message.html ? { html: message.html } : {}),
+          }),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        })
+        if (fallbackRes.ok) {
+          const fbBody: unknown = await fallbackRes.json().catch(() => null)
+          const fbId =
+            fbBody && typeof fbBody === 'object' && 'id' in fbBody && typeof fbBody.id === 'string'
+              ? fbBody.id
+              : 'fallback-ok'
+          return { sent: true, id: fbId }
+        }
+      } catch (fbErr) {
+        console.error('[email] Fallback delivery also failed:', fbErr)
+      }
+    }
+
     return { sent: false, reason }
   }
 

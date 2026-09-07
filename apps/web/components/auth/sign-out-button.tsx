@@ -32,7 +32,13 @@ import { useSupabaseClient } from '@/components/auth/supabase-provider.tsx'
  * portal moves it to <body>, out from under that containing block, where
  * `fixed inset-0` finally means the whole screen.
  */
-export function SignOutButton({ className }: { className?: string }) {
+export function SignOutButton({
+  className,
+  style,
+}: {
+  className?: string
+  style?: React.CSSProperties
+}) {
   const supabase = useSupabaseClient()
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -71,7 +77,7 @@ export function SignOutButton({ className }: { className?: string }) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className={className}>
+      <button type="button" onClick={() => setOpen(true)} className={className} style={style}>
         Sign out
       </button>
 

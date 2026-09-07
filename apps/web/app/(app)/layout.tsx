@@ -2,25 +2,17 @@
  * Shell for signed-in pages.
  *
  * requireUser() runs once here rather than in every page, and it returns the
- * account context so the nav can show it without a second query. Note what
- * this is NOT doing: it is not the access control for the data below it. Each
- * query still takes a Viewer, because a layout only guards the pages it wraps
- * and a query can be reached from anywhere.
+ * account context so the nav can show it without a second query.
  *
- * ## What this layout does and does not restyle
+ * ## Why this layout supplies the counts
  *
- * It supplies the rail, and nothing else. The `.console` class that switches
- * the product from its monospace terminal identity to a sans console face is
- * applied by the sidebar and by the dashboard page themselves — deliberately
- * NOT here, because every other page under this layout (the project view,
- * settings, verify) was designed in the terminal face and is not part of this
- * change. They gain the rail as navigation and keep their own typography.
- *
- * The two counts are read here rather than in the sidebar because the sidebar
- * is a client component; it displays what it is handed and queries nothing.
+ * The sidebar is a client component; it displays what it is handed and queries
+ * nothing. Counts for the asset badges come from this server component.
+ * Repositories/containers/clouds are still on a `soon` row — counts are passed
+ * so the badges light up the moment those features ship.
  */
 
-import { listProjectSummaries, listRecentScansForUser } from '@scanlyfix/db'
+import { listProjectSummaries, listRecentScansForUser, listReposForViewer } from '@scanlyfix/db'
 import { getViewer, requireUser } from '@/lib/authz.ts'
 import { SupabaseAuthProvider } from '@/components/auth/supabase-provider.tsx'
 import { Sidebar } from '@/components/console/sidebar.tsx'
@@ -28,9 +20,10 @@ import { Sidebar } from '@/components/console/sidebar.tsx'
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser()
   const viewer = await getViewer()
-  const [summaries, recentScans] = await Promise.all([
+  const [summaries, recentScans, repositories] = await Promise.all([
     listProjectSummaries(viewer),
     listRecentScansForUser(viewer),
+    listReposForViewer(viewer),
   ])
 
   return (
@@ -41,8 +34,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           plan={user.plan}
           sites={summaries.length}
           scans={recentScans.length}
+          repositories={repositories.length}
+          containers={0}
+          clouds={0}
+          domains={summaries.length}
         />
-        <main className="min-w-0 flex-1">{children}</main>
+        <main className="min-w-0 flex-1 bg-white text-gray-900 dark:bg-white dark:text-gray-900">
+          {children}
+        </main>
       </div>
     </SupabaseAuthProvider>
   )

@@ -74,14 +74,31 @@ export function render(alert: AlertSubject): Rendered {
     const streak = num(alert.payload, 'streak') ?? 0
     const code = num(alert.payload, 'statusCode')
     const detail = str(alert.payload, 'detail')
+    const latency = num(alert.payload, 'latencyMs')
     const observed = code !== null ? `HTTP ${code}` : (detail ?? 'no response')
 
+    const observedBlock: string[] = [`Observed: ${observed}`]
+    if (code !== null && code >= 500) {
+      // WHY call this out: a 5xx is almost always a server problem and
+      // worth a separate line the reader can act on without parsing prose.
+      observedBlock.push(`The server returned a 5xx error (code ${code}).`)
+    } else if (code !== null && code >= 400 && code < 500) {
+      observedBlock.push(`The server returned a 4xx error (code ${code}).`)
+    } else if (code === null) {
+      observedBlock.push(`No HTTP response was received.`)
+    }
+    if (latency !== null && latency > 0) {
+      observedBlock.push(`Last response latency: ${latency}ms`)
+    }
+
     return {
-      subject: `${host} is not responding`,
+      subject: code !== null
+        ? `[DOWN] ${host} — HTTP ${code}`
+        : `${host} is not responding`,
       text: lines([
         `${host} has failed ${streak} consecutive checks.`,
         '',
-        `Observed: ${observed}`,
+        ...observedBlock,
         `Checked:  ${alert.projectUrl}`,
         '',
         `Status page: ${status}`,
@@ -122,22 +139,26 @@ export function render(alert: AlertSubject): Rendered {
     const detail = str(alert.payload, 'detail')
     const downFor = str(alert.payload, 'downFor') ?? 'unknown duration'
     const reminderNumber = num(alert.payload, 'reminderNumber') ?? 1
+    const latency = num(alert.payload, 'latencyMs')
     const observed = code !== null ? `HTTP ${code}` : (detail ?? 'no response')
 
     return {
-      subject: `[STILL DOWN] ${host} — down for ${downFor} (reminder #${reminderNumber})`,
+      subject: code !== null
+        ? `[STILL DOWN] ${host} — HTTP ${code} — down for ${downFor}`
+        : `[STILL DOWN] ${host} — down for ${downFor} (reminder #${reminderNumber})`,
       text: lines([
         `${host} is still down after ${downFor}.`,
         '',
         `This is reminder #${reminderNumber}.`,
         `Last observed: ${observed}`,
+        latency !== null && latency > 0 ? `Last response latency: ${latency}ms` : null,
         `Checked: ${alert.projectUrl}`,
         '',
         `Status page: ${status}`,
         '',
         'The site has not recovered since the initial downtime alert.',
         'You will continue to receive reminders until the site comes back up.',
-      ]),
+      ].filter((l): l is string => l !== null)),
     }
   }
 

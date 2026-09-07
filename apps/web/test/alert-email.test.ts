@@ -67,7 +67,7 @@ describe('deliverAlert', () => {
 
     const message = sendEmail.mock.calls[0]?.[0]
     expect(message.to).toBe('owner@example.test')
-    expect(message.subject).toBe('scanlyfix.test is not responding')
+    expect(message.subject).toBe('[DOWN] scanlyfix.test — HTTP 503')
     expect(message.text).toContain('failed 3 consecutive checks')
     // The HTML is a mirror of the text, so it must carry the same facts.
     expect(message.html).toContain('failed 3 consecutive checks')
@@ -132,7 +132,7 @@ describe('deliverAlert', () => {
     expect(sendSlack).toHaveBeenCalledWith(
       'https://hooks.slack.com/services/T/B/X',
       expect.objectContaining({
-        text: 'scanlyfix.test is not responding',
+        text: '[DOWN] scanlyfix.test — HTTP 503',
       }),
     )
   })

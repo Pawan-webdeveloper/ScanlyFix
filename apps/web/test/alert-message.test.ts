@@ -28,9 +28,25 @@ describe('downtime', () => {
   it('names the host and the streak, and quotes the status code', () => {
     const { subject, text } = render(alert('downtime', { streak: 3, statusCode: 503, detail: null }))
 
-    expect(subject).toBe('scanlyfix.test is not responding')
+    expect(subject).toBe('[DOWN] scanlyfix.test — HTTP 503')
     expect(text).toContain('failed 3 consecutive checks')
     expect(text).toContain('Observed: HTTP 503')
+    expect(text).toContain('The server returned a 5xx error (code 503).')
+  })
+
+  it('classifies a 4xx as a client-side failure', () => {
+    const { text } = render(alert('downtime', { streak: 2, statusCode: 404, detail: null }))
+
+    expect(text).toContain('Observed: HTTP 404')
+    expect(text).toContain('The server returned a 4xx error (code 404).')
+  })
+
+  it('reports latency when the probe provided it', () => {
+    const { text } = render(
+      alert('downtime', { streak: 2, statusCode: 503, latencyMs: 1500, detail: null }),
+    )
+
+    expect(text).toContain('Last response latency: 1500ms')
   })
 
   it('falls back to the transport detail when there was no status code', () => {

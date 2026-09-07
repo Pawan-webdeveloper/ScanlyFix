@@ -409,3 +409,60 @@ describe('edge cases', () => {
     }
   })
 })
+
+// ─── failuresBeforeAlert ─────────────────────────────────────────────────────
+
+describe('AlertConfigSchema — failuresBeforeAlert', () => {
+  it('accepts 1, 2, 3, 5', () => {
+    for (const value of [1, 2, 3, 5]) {
+      const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: value })
+      expect(result.success).toBe(true)
+    }
+  })
+
+  it('rejects 0 (must be >= 1)', () => {
+    const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: 0 })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects 4 (must be one of 1, 2, 3, 5)', () => {
+    const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: 4 })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects non-integers', () => {
+    const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: 2.5 })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects > 5', () => {
+    const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: 10 })
+    expect(result.success).toBe(false)
+  })
+})
+
+// ─── alertEmail ──────────────────────────────────────────────────────────────
+
+describe('AlertConfigSchema — alertEmail', () => {
+  it('accepts a valid email', () => {
+    const result = AlertConfigSchema.safeParse({
+      alertEmail: 'alerts@example.com',
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('accepts null', () => {
+    const result = AlertConfigSchema.safeParse({ alertEmail: null })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects an invalid email', () => {
+    const result = AlertConfigSchema.safeParse({ alertEmail: 'not-an-email' })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects empty string', () => {
+    const result = AlertConfigSchema.safeParse({ alertEmail: '' })
+    expect(result.success).toBe(false)
+  })
+})
