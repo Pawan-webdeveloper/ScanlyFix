@@ -21,7 +21,7 @@ import { LoginFormClient } from './login-form-client.tsx'
 
 const LOGIN_ERRORS: Record<string, string> = {
   'github-connect-requires-signin':
-    'Your session ended during the GitHub setup, so the install was not saved. Sign in, then connect GitHub again.',
+    'Sign in to finish connecting GitHub — the install completes automatically once you are signed in.',
 }
 
 export default async function LoginPage({
