@@ -11,7 +11,11 @@
  * app a second, weaker copy of its access rules — and the copy that lives in
  * the query layer is the one that cannot be bypassed by reaching a page a
  * different way. Pages call requireUser(); queries take a Viewer. This file
- * only keeps the cookie fresh.
+ * only keeps the cookie fresh, with ONE routing convenience on top: a
+ * signed-in visitor asking for `/` is forwarded to the dashboard
+ * (lib/homepage-redirect.ts). That grants and gates nothing — the dashboard's
+ * guard is still requireUser(), and the homepage stays reachable at
+ * `/?home=1` — it just spares a signed-in user the landing page.
  *
  * Named `proxy` rather than `middleware`: Next 16 deprecated that convention.
  *
@@ -40,6 +44,7 @@ import { NextResponse, type NextRequest, type NextFetchEvent } from 'next/server
 import { createServerClient } from '@supabase/ssr'
 import { publicEnv } from '@/lib/public-env.ts'
 import { serverEnv } from '@/lib/env.ts'
+import { signedInHomepageTarget } from '@/lib/homepage-redirect.ts'
 
 export async function proxy(request: NextRequest, event: NextFetchEvent) {
   warnIfAllowlistMismatched(request)
@@ -69,11 +74,29 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   // Touch the session. getUser() refreshes the access token when it is close
   // to expiry and writes the new value back through the adapter above. Do
   // not run any other auth code between createServerClient and getUser().
+  // The user it reports also feeds the one routing rule below.
+  let userPresent = false
   try {
-    await supabase.auth.getUser()
+    const { data } = await supabase.auth.getUser()
+    userPresent = data.user != null
   } catch {
     // Transient network errors or Supabase cold-boot timeouts should not crash
     // the proxy. The request continues; downstream auth guards verify the session.
+  }
+
+  // A signed-in visitor asking for the landing page goes to the dashboard.
+  // The decision lives in lib/homepage-redirect.ts, including the ?home=1
+  // escape hatch the console logo uses.
+  const homepageTarget = signedInHomepageTarget(userPresent, request.nextUrl)
+  if (homepageTarget !== null) {
+    const redirectResponse = NextResponse.redirect(new URL(homepageTarget, request.url))
+    // getUser() may have rotated the session cookies onto supabaseResponse; a
+    // redirect that drops them would force a second rotation on the next
+    // request. Carry them over.
+    for (const cookie of supabaseResponse.cookies.getAll()) {
+      redirectResponse.cookies.set(cookie)
+    }
+    return redirectResponse
   }
 
   // event is unused today; reserved for future abort signalling.

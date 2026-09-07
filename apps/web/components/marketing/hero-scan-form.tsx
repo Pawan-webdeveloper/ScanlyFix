@@ -36,21 +36,30 @@ export function HeroScanForm() {
   const inputId = useId()
   const errorId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
-  // A scan-gated sign-in now lands on the dashboard, which reclaims the URL.
-  // This stays opted-in as a fallback: takePendingUrl is read-once, so if a
-  // visitor ever returns here signed in with a URL still stashed, this reclaims
-  // it without being able to fight the dashboard for the same key.
   const session = useSession()
+  const isAuthenticated = session.data?.session?.user != null
+  // Restore is now signed-out-only: a signed-in visitor is shown the dashboard
+  // call-to-action below instead of this form, and a mounted-but-unrendered
+  // form must not consume a stashed URL that /scan/start or the dashboard
+  // scan form would otherwise reclaim — takePendingUrl is read-once.
   const { value, setValue, pending, error, submit } = useScanSubmit({
-    restore: true,
+    restore: !isAuthenticated,
     inputRef,
-    authState: { isAuthenticated: session.data?.session?.user != null, isLoading: session.isLoading },
+    authState: { isAuthenticated, isLoading: session.isLoading },
   })
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const started = await submit()
     if (!started) inputRef.current?.focus()
+  }
+
+  // A signed-in visitor never sees the field: the form exists to earn the
+  // account they already have, so for them it collapses to the one click
+  // that matters — into the product. (After the hooks above, per React's
+  // rules; the form below remains the render for everyone else.)
+  if (isAuthenticated) {
+    return <HeroDashboardCta email={session.data?.session?.user?.email ?? null} />
   }
 
   return (
@@ -130,5 +139,43 @@ export function HeroScanForm() {
         Read the checks
       </Link>
     </form>
+  )
+}
+
+/**
+ * What the hero shows a signed-in visitor instead of the URL field.
+ *
+ * Same visual weight as the scan button it replaces — h-14, the 2px border,
+ * inverted at rest — so the hero keeps exactly one primary object. The label
+ * keeps the form's rhythm ("who this is for" above the action) and names the
+ * account, which is the only personalisation the hero can afford without
+ * breaking its two-colour rule.
+ */
+function HeroDashboardCta({ email }: { email: string | null }) {
+  return (
+    <div>
+      <p className={`mb-2.5 block text-hero-ink ${LABEL}`}>
+        {email ? `Signed in as ${email}` : 'You are signed in'}
+      </p>
+
+      <Link
+        href="/dashboard"
+        className={`flex h-14 w-full items-center justify-center gap-2 border-2 border-hero-ink
+ bg-hero-ink px-7 font-medium text-hero-on-ink transition-colors duration-150
+ hover:bg-transparent hover:text-hero-ink focus-visible:outline-none
+ focus-visible:shadow-[0_0_0_2px_var(--brand),0_0_0_4px_var(--hero-ink)] sm:w-auto ${LABEL}`}
+      >
+        Go to dashboard
+        <ArrowRight size={16} />
+      </Link>
+
+      <Link
+        href="/#checks"
+        className={`mt-1 inline-flex h-11 items-center border border-hero-ink px-6 text-hero-ink
+ transition-colors duration-150 hover:bg-hero-ink hover:text-hero-on-ink ${LABEL}`}
+      >
+        Read the checks
+      </Link>
+    </div>
   )
 }

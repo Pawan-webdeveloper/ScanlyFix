@@ -208,9 +208,19 @@ function Rail({
       className="flex h-full flex-col overflow-hidden"
     >
       {/* ── Header: logo lockup ─────────────────────────── */}
-      <div className="flex items-center gap-2.5 border-b border-c-line px-4 py-[14px]">
+      {/* Home is `/?home=1`, not `/`: a signed-in visit to `/` forwards to
+          the dashboard (lib/homepage-redirect.ts), so the bare path would
+          bounce this click straight back to where it started. The param is
+          the escape hatch that shows the real marketing page. */}
+      <Link
+        href="/?home=1"
+        onClick={onNavigate}
+        data-press=""
+        aria-label="Scanlyfix — home"
+        className="flex items-center gap-2.5 border-b border-c-line px-4 py-[14px] transition-colors hover:bg-c-soft"
+      >
         <LogoLockup size={26} word="Scanlyfix" tone="ink" />
-      </div>
+      </Link>
 
       {/* ── Workspace chip ──────────────────────────────── */}
       <div className="px-3 pt-3">
