@@ -16,6 +16,19 @@ export async function GET(request: Request) {
   const next = url.searchParams.get('next') ?? '/feed'
 
   if (!installationIdRaw) return fail('missing-installation', 400, url.origin, next)
+
+  // An OAuth `code` beside installation_id means the GitHub App still has
+  // "Request user authorization (OAuth) during installation" enabled. For
+  // that flow GitHub ignores the redirect_url the Connect button built and
+  // sends the user to the app's FIRST configured Callback URL instead — which
+  // strands every origin that isn't listed first. The app never uses user
+  // tokens (installation tokens only), so that setting should stay off.
+  if (url.searchParams.get('code')) {
+    console.warn(
+      '[github/callback] OAuth code present: the GitHub App requests user authorization during installation, so GitHub ignored redirect_url and used its first configured Callback URL.',
+    )
+  }
+
   const installationId = Number(installationIdRaw)
   if (!Number.isFinite(installationId)) return fail('invalid-installation', 400, url.origin, next)
 
