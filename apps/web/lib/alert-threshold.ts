@@ -187,10 +187,12 @@ export const AlertConfigSchema = z.object({
    * mode for teams that prefer to triage in their own tooling first.
    */
   failuresBeforeAlert: z
-    .number()
-    .int()
-    .min(1)
-    .max(5)
+    .union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(5),
+    ])
     .optional(),
 
   /**

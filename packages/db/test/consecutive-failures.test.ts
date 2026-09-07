@@ -103,11 +103,11 @@ describe('consecutiveFailures — core behavior', () => {
 // ─── Lookback parameter ───────────────────────────────────────────────────────
 
 describe('consecutiveFailures — lookback parameter', () => {
-  it('defaults to look=5', async () => {
+  it('defaults to look=10', async () => {
     mockFindMany.mockResolvedValue([])
     await consecutiveFailures('monitor-1')
     expect(mockFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 5 }),
+      expect.objectContaining({ limit: 10 }),
     )
   })
 

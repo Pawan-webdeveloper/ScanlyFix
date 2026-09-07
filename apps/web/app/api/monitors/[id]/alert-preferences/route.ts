@@ -33,7 +33,12 @@ export const runtime = 'nodejs'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const PatchSchema = z.object({
-  failuresBeforeAlert: z.number().int().min(1).max(5),
+  failuresBeforeAlert: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(5),
+  ]),
   alertEmail: z
     .string()
     .trim()
@@ -129,19 +134,30 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const existing = parseAlertConfig(monitor.alertConfig ?? {})
-    const baseConfig: AlertConfig = existing.ok
-      ? existing.config
-      : ({} as AlertConfig)
+    const existingAlertConfig =
+      typeof monitor.alertConfig === 'object' && monitor.alertConfig !== null
+        ? (monitor.alertConfig as Record<string, unknown>)
+        : {}
+
+    const normalizedEmail =
+      typeof parsed.data.alertEmail === 'string' && parsed.data.alertEmail.trim().length > 0
+        ? parsed.data.alertEmail.trim()
+        : null
+
     const nextConfig: AlertConfig = {
-      ...baseConfig,
+      ...existingAlertConfig,
       failuresBeforeAlert: parsed.data.failuresBeforeAlert,
-      alertEmail: parsed.data.alertEmail,
+      alertEmail: normalizedEmail,
     }
+
+    const updatePayload = Object.assign(
+      { alertConfig: nextConfig },
+      nextConfig,
+    )
 
     await db
       .update(monitors)
-      .set({ alertConfig: nextConfig })
+      .set(updatePayload as any)
       .where(eq(monitors.id, id))
 
     return NextResponse.json({ ok: true })

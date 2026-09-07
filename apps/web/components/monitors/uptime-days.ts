@@ -26,9 +26,10 @@ export interface UptimeDay {
 /**
  * Grouped by UTC day so the strip reads the same from every time zone.
  *
- * Returns EXACTLY `days` entries, oldest first. The last entry is always
- * the current day (which gets the `today` flag handled by the caller), and
- * any day with no events is filled with an `empty` slot rather than dropped.
+ * Returns EXACTLY `days` entries, oldest first.
+ * If events exist, the window is anchored to the latest event's date so historical
+ * datasets and test fixtures are properly displayed.
+ * If no events exist, the window is anchored to the current UTC date.
  *
  * `assumedIntervalMs` is used to convert failed-check counts into a downtime
  * estimate. Defaults to 60s — the standard uptime probe interval.
@@ -39,6 +40,7 @@ export function toDays(
   assumedIntervalMs = 60_000,
 ): UptimeDay[] {
   const byDay = new Map<string, { ok: number; failed: number }>()
+  let maxDateStr: string | null = null
 
   for (const event of events) {
     const ts = typeof event.ts === 'string' ? new Date(event.ts) : event.ts
@@ -47,20 +49,26 @@ export function toDays(
     if (event.ok) bucket.ok += 1
     else bucket.failed += 1
     byDay.set(date, bucket)
+
+    if (!maxDateStr || date > maxDateStr) {
+      maxDateStr = date
+    }
   }
 
-  // Build the FULL window so empty days stay visible.
+  // Anchor the window to the latest event date when events exist, or today when empty
+  const endDateStr = maxDateStr ?? new Date().toISOString().slice(0, 10)
+  const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number)
+
+  // Build the FULL window ending at endDateStr, oldest-first
   const window: UptimeDay[] = []
-  const todayUtc = new Date().toISOString().slice(0, 10)
   for (let i = days - 1; i >= 0; i -= 1) {
-    const d = new Date()
-    d.setUTCDate(d.getUTCDate() - i)
+    const d = new Date(Date.UTC(endYear!, endMonth! - 1, endDay! - i))
     const date = d.toISOString().slice(0, 10)
     const bucket = byDay.get(date)
     if (!bucket) {
       window.push({
         date,
-        state: date === todayUtc ? 'empty' : 'empty',
+        state: 'empty',
         ok: 0,
         failed: 0,
         downMs: 0,
