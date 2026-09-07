@@ -7,6 +7,7 @@
  */
 
 import Link from 'next/link'
+import { headers } from 'next/headers'
 import {
   listInstallationsForViewer,
   listReposForInstallation,
@@ -16,6 +17,7 @@ import {
 } from '@scanlyfix/db'
 import { getViewer, requireUser } from '@/lib/authz.ts'
 import { serverEnv } from '@/lib/env.ts'
+import { buildInstallUrl, requestOrigin } from '@/lib/github-connect.ts'
 import { PageHeader } from '@/components/console/page-header.tsx'
 import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
@@ -32,13 +34,6 @@ function scoreTone(score: number | null): string {
   if (score >= 90) return 'text-emerald-600'
   if (score >= 70) return 'text-amber-600'
   return 'text-sev-high'
-}
-
-function buildInstallUrl(slug: string, appUrl: string): string {
-  const base = `https://github.com/apps/${slug}/installations/new`
-  if (!appUrl) return base
-  const callback = `${appUrl.replace(/\/+$/, '')}/api/github/callback?next=${encodeURIComponent('/feed')}`
-  return `${base}?redirect_url=${encodeURIComponent(callback)}`
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -74,8 +69,14 @@ export default async function FeedPage({
   const repos = repoLists.flat()
 
   const hasInstallations = installations.length > 0
+  // The install redirect goes back to the origin the visitor is actually on —
+  // a session cookie on localhost does not exist on scanlyfix.com, and a
+  // callback that cannot see it drops the installation on the floor.
   const githubUrl = serverEnv.githubConfigured
-    ? buildInstallUrl(serverEnv.githubAppSlug, process.env['NEXT_PUBLIC_APP_URL'] ?? '')
+    ? buildInstallUrl(
+        serverEnv.githubAppSlug,
+        requestOrigin(await headers(), process.env['NEXT_PUBLIC_APP_URL'] ?? ''),
+      )
     : null
 
   // Fetch the latest scan for each repo (small N, acceptable latency)
