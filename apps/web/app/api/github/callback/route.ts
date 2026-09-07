@@ -34,8 +34,18 @@ export async function GET(request: Request) {
 
   const viewer = await getViewer()
   if (viewer.kind !== 'user') {
+    /*
+     * The install is not lost with the session. The same route runs again
+     * after sign-in — it is idempotent — so `next` carries the installation
+     * id straight through /login and the connect completes without the user
+     * finding the button twice. A same-origin path with a query, exactly the
+     * shape safeNextPath exists to allow.
+     */
+    const resume = new URL('/api/github/callback', url.origin)
+    resume.searchParams.set('installation_id', String(installationId))
+    if (setupAction) resume.searchParams.set('setup_action', setupAction)
     const login = new URL('/login', url.origin)
-    login.searchParams.set('next', next)
+    login.searchParams.set('next', `${resume.pathname}${resume.search}`)
     login.searchParams.set('error', 'github-connect-requires-signin')
     return NextResponse.redirect(login)
   }

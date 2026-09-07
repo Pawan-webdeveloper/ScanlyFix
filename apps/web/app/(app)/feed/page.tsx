@@ -46,7 +46,7 @@ const STATUS_LABEL: Record<string, string> = {
 const FEED_ERRORS: Record<string, string> = {
   'missing-installation': 'GitHub did not provide an installation ID. Try connecting again.',
   'invalid-installation': 'GitHub returned an invalid installation ID. Try connecting again.',
-  'github-connect-requires-signin': 'Your session expired during the GitHub setup. Sign in and try again.',
+  'github-connect-requires-signin': 'Your session ended during the GitHub setup. Sign in and the connection finishes automatically.',
   'github-install-failed': 'Could not finish setting up the GitHub App. Try again in a moment.',
 }
 
