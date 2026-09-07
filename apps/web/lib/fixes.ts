@@ -99,7 +99,7 @@ Rules:
 - At most ~200 words. Plain text. Every sentence either locates the problem, fixes it, or verifies the fix.`
 
 /** The free-tier model, tested live before wiring. Override with FIXES_MODEL. */
-const DEFAULT_MODEL = 'minimax/minimax-m3:free'
+const DEFAULT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free'
 
 /**
  * What a completion attempt can conclude with. `canFallback` marks the

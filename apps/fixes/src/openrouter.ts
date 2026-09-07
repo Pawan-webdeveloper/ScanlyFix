@@ -13,7 +13,7 @@ import { buildMessages, type FixFindingInput } from './master-prompt.ts'
 export const GENERATE_TIMEOUT_MS = 45_000
 
 /** The free-tier model, tested live before wiring. Override with FIXES_MODEL. */
-export const DEFAULT_MODEL = 'minimax/minimax-m3:free'
+export const DEFAULT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free'
 
 export interface ModelConfig {
   apiKey: string

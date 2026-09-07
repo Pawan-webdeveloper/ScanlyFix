@@ -19,7 +19,7 @@ const FINDING: FixFinding = {
   siteUrl: 'https://example.com',
 }
 
-const PRIMARY = 'minimax/minimax-m3:free'
+const PRIMARY = 'nvidia/nemotron-3-ultra-550b-a55b:free'
 
 function okBody(prompt: string) {
   return {
