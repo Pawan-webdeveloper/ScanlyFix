@@ -22,6 +22,7 @@ import {
   consecutiveFailures,
   dueMonitorsForScheduler,
   listMonitors,
+  listMonitorsForUser,
   recordMonitorRun,
   setMonitor,
 } from '../src/queries/monitors.ts'
@@ -259,6 +260,59 @@ describe.skipIf(!live)('monitors and alerts (SCANLYFIX_DB=1)', () => {
       await recordAlertOnce({ projectId: made.projectId, kind: 'downtime', channel: 'email', payload: {} })
       expect(await listAlerts(made.projectId, ANONYMOUS)).toEqual([])
       expect(await listAlerts(made.projectId, viewer)).toEqual([])
+    })
+  })
+
+  /*
+   * Regression for the "removed domain still shows as down" bug.
+   *
+   * listMonitorsForUser is the wire shape behind /monitors, /api/monitors,
+   * the dashboard "Down" tile, and the public status page. It must report
+   * a disabled monitor with the frozen-down lastStatus as enabled=false so
+   * every consumer can short-circuit it — otherwise the UI surfaces a
+   * paused monitor as "down" because the row's lastStatus is whatever it
+   * was at the moment of pause (frequently "down" — pausing is what you
+   * do when a site is down).
+   */
+  describe('listMonitorsForUser', () => {
+    it('reports enabled=false on a paused uptime monitor', async () => {
+      const made = await newProject()
+      const monitor = await setMonitor(made.projectId, made.viewer, { type: 'uptime', enabled: false })
+
+      const list = await listMonitorsForUser(made.viewer)
+      const found = list.find((m) => m.id === monitor?.id)
+      expect(found?.enabled).toBe(false)
+    })
+
+    it('does not flag a disabled monitor as stale', async () => {
+      // Without this, the "Stale" tile would count the paused monitor — a
+      // monitor nobody is probing is not "stale", it is "paused".
+      const made = await newProject()
+      const monitor = await setMonitor(made.projectId, made.viewer, { type: 'uptime', enabled: false })
+      // Backdate lastRunAt far past the stale threshold; if the consumer
+      // ignored enabled, this would now look stale.
+      await db
+        .update(monitors)
+        .set({ lastRunAt: sql`now() - interval '1 day'`, lastStatus: 'down' })
+        .where(eq(monitors.id, monitor!.id))
+
+      const list = await listMonitorsForUser(made.viewer)
+      const found = list.find((m) => m.id === monitor?.id)
+      expect(found?.enabled).toBe(false)
+      expect(found?.isStale).toBe(false)
+    })
+
+    it('keeps the disabled row out of the next sweep claim', async () => {
+      // claimDueMonitors filters by enabled=true at the SQL level; this
+      // guards against the day someone re-adds a stale claim path that
+      // forgets the filter and starts dispatching disabled monitors again.
+      const made = await newProject()
+      const monitor = await setMonitor(made.projectId, made.viewer, { type: 'uptime', enabled: false })
+      expect((await dueMonitorsForScheduler()).some((m) => m.id === monitor!.id)).toBe(false)
+    })
+
+    it('returns [] for an anonymous viewer', async () => {
+      expect(await listMonitorsForUser(ANONYMOUS)).toEqual([])
     })
   })
 })

@@ -165,4 +165,52 @@ describe('getMonitorStatus', () => {
       expect(result.label).toBe('No recent checks')
     })
   })
+
+  /*
+   * Disabled monitors have to read as paused, not as the frozen lastStatus
+   * the row had at the moment of pause — pausing is what you do when a site
+   * is down, so a disabled monitor's lastStatus is "down" more often than
+   * not. Surfacing that frozen value as the live status is the bug.
+   */
+  describe('disabled monitors', () => {
+    it('returns "disabled" regardless of frozen lastStatus "down"', () => {
+      // The exact failure this regression guard exists for: a monitor that
+      // was paused while in a failing state must NOT surface as "down" when
+      // the user reopens the uptime page.
+      const result = getMonitorStatus(new Date(), 'down', 60, false)
+      expect(result.status).toBe('disabled')
+      expect(result.isStale).toBe(false)
+      expect(result.label).toBe('Paused')
+    })
+
+    it('returns "disabled" regardless of frozen lastStatus "up"', () => {
+      const result = getMonitorStatus(new Date(), 'up', 60, false)
+      expect(result.status).toBe('disabled')
+      expect(result.isStale).toBe(false)
+      expect(result.label).toBe('Paused')
+    })
+
+    it('returns "disabled" even when never run', () => {
+      const result = getMonitorStatus(null, null, 60, false)
+      expect(result.status).toBe('disabled')
+      expect(result.label).toBe('Paused')
+    })
+
+    it('short-circuits stale detection — a paused monitor is never stale', () => {
+      // lastRunAt is 24h ago and intervalS is 60s — would be stale if enabled,
+      // and a stale-down reading would still look like a problem.
+      const intervalS = 60
+      const veryOld = new Date(Date.now() - intervalS * 1000 * 24)
+      const result = getMonitorStatus(veryOld, 'down', intervalS, false)
+      expect(result.status).toBe('disabled')
+      expect(result.isStale).toBe(false)
+    })
+
+    it('treats the default-true signature as backward-compatible', () => {
+      // Three-arg call (legacy) must still behave like an enabled monitor.
+      const enabledByDefault = getMonitorStatus(new Date(), 'down', 60)
+      expect(enabledByDefault.status).toBe('down')
+      expect(enabledByDefault.isStale).toBe(false)
+    })
+  })
 })

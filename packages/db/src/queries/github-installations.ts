@@ -131,27 +131,32 @@ export async function listReposForInstallation(installationId: string): Promise<
 /** All repos visible to the viewer across every installation. */
 export async function listReposForViewer(viewer: Viewer): Promise<GithubRepo[]> {
   if (viewer.kind !== 'user') return []
-  return db.query.githubRepos.findMany({
-    where: eq(githubInstallations.userId, viewer.userId),
-    orderBy: desc(githubRepos.createdAt),
-    with: { installation: { columns: { id: true, accountLogin: true, accountType: true } } },
-  })
+  return db
+    .select({ repo: githubRepos })
+    .from(githubRepos)
+    .innerJoin(githubInstallations, eq(githubInstallations.id, githubRepos.installationId))
+    .where(eq(githubInstallations.userId, viewer.userId))
+    .orderBy(desc(githubRepos.createdAt))
+    .then((rows) => rows.map((r) => r.repo))
 }
 
 /**
- * A repo the user has stored, looked up by the GitHub (owner, name) tuple it
- * carries. Returns null when the viewer does not own it, so a caller cannot
- * accidentally scan a repo that belongs to someone else by guessing a row id.
+ * A repo the user has stored, looked up by its row id. Returns null when the
+ * viewer does not own it, so a caller cannot accidentally scan a repo that
+ * belongs to someone else by guessing a row id.
  */
 export async function getRepoForViewer(
   repoId: string,
   viewer: Viewer,
 ): Promise<GithubRepo | null> {
   if (viewer.kind !== 'user') return null
-  const row = await db.query.githubRepos.findFirst({
-    where: and(eq(githubRepos.id, repoId), eq(githubInstallations.userId, viewer.userId)),
-  })
-  return row ?? null
+  const row = await db
+    .select({ repo: githubRepos })
+    .from(githubRepos)
+    .innerJoin(githubInstallations, eq(githubInstallations.id, githubRepos.installationId))
+    .where(and(eq(githubRepos.id, repoId), eq(githubInstallations.userId, viewer.userId)))
+    .limit(1)
+  return row[0]?.repo ?? null
 }
 
 /**

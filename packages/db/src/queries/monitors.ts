@@ -49,13 +49,30 @@ export type MonitorType = Monitor['type']
  * 3× its configured interval. This indicates the worker may be dead or
  * stuck, and the monitor's lastStatus is no longer reliable.
  *
- * Status priority: stale > down > up > null (never run)
+ * Status priority: disabled > stale > down > up > null (never run).
+ *
+ * ## Why "disabled" is its own status, not "stale"
+ *
+ * A disabled monitor has `lastStatus` frozen at whatever it was the moment the
+ * user paused it — frequently `down`, because pausing is what you do when a
+ * site is down. If we surfaced that frozen value as the live status, the
+ * user would reopen the Uptime page, see a red "down" indicator on the
+ * monitor they paused, and conclude the probe was still running. The monitor
+ * is *not* down, up, or stale — it is paused. Treating it as anything else
+ * is a UI lie.
  */
 export function getMonitorStatus(
   lastRunAt: Date | null,
   lastStatus: 'up' | 'down' | null,
   intervalS: number,
-): { status: 'up' | 'down' | 'stale' | null; isStale: boolean; label: string } {
+  enabled: boolean = true,
+): { status: 'up' | 'down' | 'stale' | 'disabled' | null; isStale: boolean; label: string } {
+  // Disabled first — short-circuits everything else so a paused monitor
+  // never reads as "down" because of its frozen lastStatus.
+  if (!enabled) {
+    return { status: 'disabled', isStale: false, label: 'Paused' }
+  }
+
   // Never run — show as unknown
   if (!lastRunAt) {
     return { status: null, isStale: false, label: 'No recent checks' }
@@ -169,7 +186,7 @@ export async function claimDueMonitors(limit = 500): Promise<DueMonitor[]> {
     RETURNING
       id,
       type,
-      project_id,
+      project_id AS "projectId",
       (SELECT url FROM projects WHERE id = project_id) AS "projectUrl",
       (SELECT slug FROM projects WHERE id = project_id) AS "projectSlug",
       (SELECT owner_id FROM projects WHERE id = project_id) AS "ownerId"
@@ -246,17 +263,21 @@ export async function recordMonitorRun(monitorId: string, outcome: MonitorOutcom
 }
 
 export async function recentEvents(monitorId: string, viewer: Viewer, limit = 90): Promise<MonitorEvent[]> {
-  const monitor = await db.query.monitors.findFirst({
-    where: eq(monitors.id, monitorId),
-    columns: { projectId: true },
-  })
-  if (!monitor || !(await getProject(monitor.projectId, viewer))) return []
+  if (viewer.kind !== 'user') return []
 
-  return db.query.monitorEvents.findMany({
-    where: eq(monitorEvents.monitorId, monitorId),
-    orderBy: desc(monitorEvents.ts),
-    limit,
-  })
+  // Same ownership-in-join pattern as listIncidents — see the comment there
+  // for why we don't go through getProject() first. Halves the round-trips
+  // (and pool sockets held) for the timeline view the moment the page loads.
+  const rows = await db
+    .select({ event: monitorEvents })
+    .from(monitorEvents)
+    .innerJoin(monitors, eq(monitors.id, monitorEvents.monitorId))
+    .innerJoin(projects, eq(projects.id, monitors.projectId))
+    .where(and(eq(monitorEvents.monitorId, monitorId), eq(projects.ownerId, viewer.userId)))
+    .orderBy(desc(monitorEvents.ts))
+    .limit(limit)
+
+  return rows.map((r) => r.event)
 }
 
 /**
@@ -266,7 +287,7 @@ export async function recentEvents(monitorId: string, viewer: Viewer, limit = 90
  * deploy, a blip — and a monitoring product that emails about it teaches people
  * to filter it. Two in a row is a site that is actually down.
  */
-export async function consecutiveFailures(monitorId: string, look = 5): Promise<number> {
+export async function consecutiveFailures(monitorId: string, look = 10): Promise<number> {
   const events = await db.query.monitorEvents.findMany({
     where: eq(monitorEvents.monitorId, monitorId),
     orderBy: desc(monitorEvents.ts),
@@ -305,19 +326,20 @@ export async function recentScansForScheduler(projectId: string, limit = 2) {
 export async function createIncident(
   monitorId: string,
   meta: { statusCode?: number | null; detail?: string | null },
-): Promise<{ id: string }> {
+): Promise<{ id: string; startedAt: Date }> {
+  const now = new Date()
   const [row] = await db
     .insert(incidents)
     .values({
       monitorId,
-      startedAt: new Date(),
+      startedAt: now,
       statusCode: meta.statusCode ?? null,
       detail: meta.detail ?? null,
     })
     .returning({ id: incidents.id })
 
   if (!row) throw new Error('createIncident: insert returned no row')
-  return row
+  return { id: row.id, startedAt: now }
 }
 
 /**
@@ -417,14 +439,62 @@ export async function getOpenIncident(monitorId: string): Promise<{
 
  
 /**
+ * Latest event row per monitor, used to surface the live HTTP status code in
+ * the dashboard without an extra round-trip per row. Pulled in via a lateral
+ * subquery so the outer scan stays a simple join.
+ */
+const LATEST_STATUS_CODE_SUBQUERY = sql<number | null>`
+  (
+    SELECT ${monitorEvents.statusCode}
+    FROM ${monitorEvents}
+    WHERE ${monitorEvents.monitorId} = ${monitors.id}
+    ORDER BY ${monitorEvents.ts} DESC
+    LIMIT 1
+  )
+`
+
+const LATEST_LATENCY_MS_SUBQUERY = sql<number | null>`
+  (
+    SELECT ${monitorEvents.latencyMs}
+    FROM ${monitorEvents}
+    WHERE ${monitorEvents.monitorId} = ${monitors.id}
+    ORDER BY ${monitorEvents.ts} DESC
+    LIMIT 1
+  )
+`
+
+const LATEST_DETAIL_SUBQUERY = sql<string | null>`
+  (
+    SELECT ${monitorEvents.detail}
+    FROM ${monitorEvents}
+    WHERE ${monitorEvents.monitorId} = ${monitors.id}
+    ORDER BY ${monitorEvents.ts} DESC
+    LIMIT 1
+  )
+`
+
+/**
  * All monitors across every project owned by the viewer.
  * Used on the main dashboard to show a single unified list.
  *
- * Includes computed `isStale` field based on lastRunAt vs intervalS.
+ * Includes computed `isStale` field based on lastRunAt vs intervalS, plus the
+ * latest event's `statusCode`, `latencyMs`, and `detail` so the UI can show
+ * the live HTTP code (e.g. 200, 503, 404) without waiting for the next poll.
  */
 export async function listMonitorsForUser(
   viewer: Viewer,
-): Promise<Array<Monitor & { projectUrl: string; projectName: string; isStale: boolean }>> {
+): Promise<
+  Array<
+    Monitor & {
+      projectUrl: string
+      projectName: string
+      isStale: boolean
+      lastStatusCode: number | null
+      lastLatencyMs: number | null
+      lastDetail: string | null
+    }
+  >
+> {
   /* monitor error — Viewer is a union type; userId only exists on kind: 'user'.
    * Must check kind before accessing userId to satisfy TypeScript. */
   if (viewer.kind !== 'user') return []
@@ -442,17 +512,27 @@ export async function listMonitorsForUser(
       createdAt: monitors.createdAt,
       projectUrl: projects.url,
       projectName: projects.name,
+      lastStatusCode: LATEST_STATUS_CODE_SUBQUERY,
+      lastLatencyMs: LATEST_LATENCY_MS_SUBQUERY,
+      lastDetail: LATEST_DETAIL_SUBQUERY,
     })
     .from(monitors)
     .innerJoin(projects, eq(projects.id, monitors.projectId))
     .where(eq(projects.ownerId, viewer.userId))
     .orderBy(desc(monitors.createdAt))
 
-  // Compute isStale for each monitor
+  // Compute isStale for each monitor. `enabled` is threaded through so a
+  // paused monitor reads as disabled, not as the frozen lastStatus from the
+  // last probe before the pause — see getMonitorStatus for the full reason.
   return rows.map((row) => ({
     ...row,
-    isStale: getMonitorStatus(row.lastRunAt, row.lastStatus as 'up' | 'down' | null, row.intervalS).isStale,
-  })) as Array<Monitor & { projectUrl: string; projectName: string; isStale: boolean }>
+    isStale: getMonitorStatus(
+      row.lastRunAt,
+      row.lastStatus as 'up' | 'down' | null,
+      row.intervalS,
+      row.enabled,
+    ).isStale,
+  }))
 }
 
 
@@ -486,18 +566,29 @@ export async function getUptime(
   viewer: Viewer,
   period: '24h' | '7d' | '30d',
 ): Promise<UptimeResult> {
-  const monitor = await db.query.monitors.findFirst({
-    where: eq(monitors.id, monitorId),
-    columns: { projectId: true },
-  })
-  if (!monitor || !(await getProject(monitor.projectId, viewer))) {
+  if (viewer.kind !== 'user') {
+    return { total: 0, up: 0, down: 0, uptimePercent: null, avgLatencyMs: null, p95LatencyMs: null }
+  }
+
+  // Ownership check + monitor lookup in ONE round-trip. The previous shape
+  // fetched the monitor row, then made a second call to verify the project
+  // belonged to the viewer — every API request held two pool connections
+  // back-to-back, which is what tipped the Supabase session-mode pooler over
+  // its 15-client ceiling during a multi-tab dashboard reload.
+  const owner = await db
+    .select({ projectId: monitors.projectId })
+    .from(monitors)
+    .innerJoin(projects, eq(projects.id, monitors.projectId))
+    .where(and(eq(monitors.id, monitorId), eq(projects.ownerId, viewer.userId)))
+    .limit(1)
+
+  if (owner.length === 0) {
     return { total: 0, up: 0, down: 0, uptimePercent: null, avgLatencyMs: null, p95LatencyMs: null }
   }
 
   const now = new Date()
   const start = new Date(now)
 
-  // Calculate start time based on period
   switch (period) {
     case '24h':
       start.setHours(start.getHours() - 24)
@@ -536,12 +627,13 @@ export async function listIncidents(
   viewer: Viewer,
   limit = 50,
 ): Promise<IncidentWithAcknowledger[]> {
-  const monitor = await db.query.monitors.findFirst({
-    where: eq(monitors.id, monitorId),
-    columns: { projectId: true },
-  })
-  if (!monitor || !(await getProject(monitor.projectId, viewer))) return []
+  if (viewer.kind !== 'user') return []
 
+  // The monitor ownership check happens in the same query as the incident
+  // fetch — joining `projects` here makes the WHERE filter `ownerId = $viewer`
+  // authoritative at the database level. If the viewer doesn't own the
+  // monitor, the join returns zero rows and the incidents are skipped without
+  // a separate `getProject(...)` round-trip. Same logic, half the connections.
   const rows = await db
     .select({
       id: incidents.id,
@@ -557,8 +649,10 @@ export async function listIncidents(
       acknowledgerEmail: users.email,
     })
     .from(incidents)
+    .innerJoin(monitors, eq(monitors.id, incidents.monitorId))
+    .innerJoin(projects, eq(projects.id, monitors.projectId))
     .leftJoin(users, eq(users.id, incidents.acknowledgedBy))
-    .where(eq(incidents.monitorId, monitorId))
+    .where(and(eq(incidents.monitorId, monitorId), eq(projects.ownerId, viewer.userId)))
     .orderBy(desc(incidents.startedAt))
     .limit(limit)
 

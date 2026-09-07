@@ -237,7 +237,7 @@ describe('renderSlack', () => {
   it('puts the subject as the top-level text (for mobile/desktop notifications)', () => {
     const msg = renderSlack(alert('downtime', { streak: 2, statusCode: 503 }))
     expect(msg.text).toContain('scanlyfix.test')
-    expect(msg.text).toContain('not responding')
+    expect(msg.text).toContain('HTTP 503')
   })
 
   it('works for dns_drift alerts', () => {

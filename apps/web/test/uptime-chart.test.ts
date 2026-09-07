@@ -4,6 +4,9 @@
  * Pure, and the only part of the status page worth testing without a browser —
  * a strip that renders the wrong day is a status page that lies during exactly
  * the incident it was linked for.
+ *
+ * Kept as a separate file from uptime-days.test.ts (the broader characterization
+ * suite) so this file stays a quick smoke test for the chart's input contract.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -14,23 +17,30 @@ const at = (iso: string, ok: boolean) => ({ ts: new Date(iso), ok })
 describe('toDays', () => {
   it('groups by UTC day so the strip reads the same everywhere', () => {
     // Two events either side of local midnight in most zones, one UTC day.
-    const days = toDays([at('2026-08-24T01:00:00Z', true), at('2026-08-24T23:00:00Z', true)])
-    expect(days).toEqual([{ date: '2026-08-24', ok: 2, failed: 0 }])
+    const days = toDays([at('2026-08-24T01:00:00Z', true), at('2026-08-24T23:00:00Z', true)], 1)
+    expect(days[0]).toMatchObject({ date: '2026-08-24', ok: 2, failed: 0, state: 'ok' })
   })
 
   it('counts successes and failures separately within a day', () => {
-    const days = toDays([
-      at('2026-08-24T01:00:00Z', true),
-      at('2026-08-24T02:00:00Z', false),
-      at('2026-08-24T03:00:00Z', false),
-    ])
-    expect(days[0]).toEqual({ date: '2026-08-24', ok: 1, failed: 2 })
+    const days = toDays(
+      [
+        at('2026-08-24T01:00:00Z', true),
+        at('2026-08-24T02:00:00Z', false),
+        at('2026-08-24T03:00:00Z', false),
+      ],
+      1,
+    )
+    expect(days[0]).toMatchObject({ date: '2026-08-24', ok: 1, failed: 2, state: 'down' })
   })
 
   it('returns days oldest-first, whatever order the events arrive in', () => {
     // The query hands them back newest-first; the strip reads left to right.
-    const days = toDays([at('2026-08-24T00:00:00Z', true), at('2026-08-22T00:00:00Z', true)])
-    expect(days.map((d) => d.date)).toEqual(['2026-08-22', '2026-08-24'])
+    const days = toDays(
+      [at('2026-08-24T00:00:00Z', true), at('2026-08-22T00:00:00Z', true)],
+      5,
+    )
+    const active = days.filter((d) => d.ok + d.failed > 0).map((d) => d.date)
+    expect(active).toEqual(['2026-08-22', '2026-08-24'])
   })
 
   it('keeps only the most recent window', () => {
@@ -43,10 +53,14 @@ describe('toDays', () => {
   })
 
   it('accepts a serialized timestamp, which is what an API returns', () => {
-    expect(toDays([{ ts: '2026-08-24T10:00:00.000Z', ok: true }])[0]?.date).toBe('2026-08-24')
+    expect(toDays([{ ts: '2026-08-24T10:00:00.000Z', ok: true }], 1)[0]?.date).toBe(
+      '2026-08-24',
+    )
   })
 
-  it('handles a monitor with no events yet', () => {
-    expect(toDays([])).toEqual([])
+  it('returns a window of empty days when there are no events', () => {
+    const days = toDays([], 30)
+    expect(days).toHaveLength(30)
+    expect(days.every((d) => d.state === 'empty')).toBe(true)
   })
 })

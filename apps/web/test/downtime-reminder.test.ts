@@ -24,13 +24,27 @@ const alert = (kind: string, payload: Record<string, unknown> | null): AlertSubj
 })
 
 describe('Downtime reminder — email template', () => {
-  it('subject includes [STILL DOWN] and duration', () => {
+  it('subject includes [STILL DOWN], HTTP code, and duration', () => {
     const { subject } = render(
       alert('downtime-reminder', {
         downFor: '30m',
         reminderNumber: 1,
         statusCode: 503,
         detail: null,
+        streak: 5,
+      }),
+    )
+
+    expect(subject).toBe('[STILL DOWN] example.com — HTTP 503 — down for 30m')
+  })
+
+  it('falls back to reminder-number format when status code is missing', () => {
+    const { subject } = render(
+      alert('downtime-reminder', {
+        downFor: '30m',
+        reminderNumber: 1,
+        statusCode: null,
+        detail: 'ETIMEDOUT',
         streak: 5,
       }),
     )

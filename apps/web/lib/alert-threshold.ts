@@ -174,6 +174,36 @@ export const AlertConfigSchema = z.object({
     .array(z.string().uuid('Channel id must be a UUID'))
     .max(5, 'Maximum 5 channels per monitor')
     .optional(),
+
+  /**
+   * Number of consecutive failed probes required before an alert is sent.
+   *
+   * Defaults to 2 in the probe code. Anything between 1 and 5 is allowed; the
+   * uptime settings UI exposes 1, 2, 3, and 5 as a segmented group.
+   *
+   * WHY a number and not a boolean: a single failure is often a deploy blip,
+   * and a product that emails on every transient outage teaches people to
+   * filter it. 2 in a row is a site that is actually down. 5 is a paranoid
+   * mode for teams that prefer to triage in their own tooling first.
+   */
+  failuresBeforeAlert: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .optional(),
+
+  /**
+   * Email address to deliver monitor alerts to. Stored as a string in the
+   * config jsonb (no encryption — the project's primary email is already
+   * visible elsewhere in the UI). null disables email routing; the default
+   * behaviour is to deliver to the project owner.
+   */
+  alertEmail: z
+    .string()
+    .email()
+    .nullable()
+    .optional(),
 })
 
 export type AlertConfig = z.infer<typeof AlertConfigSchema>
