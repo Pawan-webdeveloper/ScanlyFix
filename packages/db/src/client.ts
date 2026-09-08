@@ -35,6 +35,27 @@
  * (port 6543) the ceiling becomes irrelevant — that mode multiplexes many
  * client connections onto a small set of backends — so the numbers above
  * are tuned for the worst case (session mode) and stay safe in the best.
+ *
+ * ## Dead sockets
+ *
+ * Supabase's pooler (and any NAT/firewall in between) silently drops idle
+ * TCP connections. When pg later reads from such a socket it gets
+ * `ETIMEDOUT`, which it re-emits on the pool. Without a listener that
+ * becomes an `uncaughtException` and Next.js dumps a whole pg client
+ * object to the console; with the handler below it is one log line and the
+ * pool simply discards the dead client. `keepAlive: true` makes the OS
+ * detect half-open connections sooner instead of waiting for the read
+ * timeout.
+ *
+ * ## TLS
+ *
+ * The DATABASE_URL carries `sslmode=no-verify`. Do NOT "upgrade" it to
+ * `sslmode=require`: pg 8.x maps require/verify-ca/verify-full to strict CA
+ * verification, and Supabase signs the pooler certificate with its own CA,
+ * so `require` fails the handshake with "self-signed certificate in
+ * certificate chain". `no-verify` still negotiates TLS 1.3 (the socket is
+ * a TLSSocket) — it only skips pinning Supabase's CA. Pinning the CA
+ * (prod-ca-2021.crt) is the stronger option if that ever matters.
  */
 
 import { drizzle } from 'drizzle-orm/node-postgres'
@@ -46,6 +67,16 @@ const pool = new Pool({
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
+  keepAlive: true,
+})
+
+// Idle pooled sockets that the Supabase pooler (or a NAT in between) has
+// silently dropped read back `ETIMEDOUT`; pg re-emits that on the pool. With
+// no listener the error escapes as an `uncaughtException` and Next.js prints
+// a wall of client internals. Log one line instead — the pool discards the
+// dead client and the next query opens a fresh connection.
+pool.on('error', (err: NodeJS.ErrnoException) => {
+  console.error(`[db] dropped an idle connection (${err.code ?? err.message})`)
 })
 
 export const db = drizzle(pool, { schema })

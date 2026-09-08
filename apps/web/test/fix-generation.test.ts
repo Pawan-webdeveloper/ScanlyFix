@@ -70,7 +70,7 @@ describe('generateFix', () => {
 
     expect(result).toEqual({ ok: true, prompt: 'Add the Content-Security-Policy header …' })
     expect(authorization).toBe('Bearer test-key')
-    expect(requestBody?.model).toBe('minimax/minimax-m3:free')
+    expect(requestBody?.model).toBe('nvidia/nemotron-3-ultra-550b-a55b:free')
     // The ceiling has to leave room for reasoning models, which spend
     // completion tokens thinking before they write (lib/fixes.ts).
     expect(requestBody?.max_tokens).toBe(1500)

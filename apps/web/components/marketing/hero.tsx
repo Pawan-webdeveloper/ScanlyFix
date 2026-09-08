@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { HeroMatrix } from './hero-matrix.tsx'
 import { HeroScanFormClient } from '@/components/scan/hero-scan-form-client.tsx'
+import { HeroNavClient } from './hero-nav.tsx'
 import { LogoBadge } from '@/components/brand/logo.tsx'
 import { Bot, Search, ShieldCheck } from './icons.tsx'
 import { TOTAL_CHECKS } from '@/lib/pillars.ts'
@@ -26,14 +26,6 @@ import { TOTAL_CHECKS } from '@/lib/pillars.ts'
 /** Two lines, kept whole. The brackets are type, not decoration. */
 const HEADLINE = ['[ Ship it.', 'Then actually check it. ]'] as const
 
-/** Only destinations that exist. Adding a page is one line here. */
-const NAV_LINKS: readonly { readonly href: string; readonly label: string }[] = [
-  { href: '/#checks', label: 'Checks' },
-  { href: '/#faq', label: 'FAQ' },
-  { href: '/pricing', label: 'Pricing' },
-  { href: '/login', label: 'Sign in' },
-]
-
 const PILLARS = [
   { Icon: ShieldCheck, label: 'Security' },
   { Icon: Search, label: 'SEO' },
@@ -44,7 +36,7 @@ const PILLARS = [
 const BARCODE = [3, 1, 1, 2, 1, 4, 1, 1, 2, 3, 1, 1, 2, 4, 1, 2, 1, 3, 1, 1, 2, 1, 3, 2, 1, 4, 1, 1] as const
 
 const LABEL = 'font-mono text-[10px] uppercase tracking-[0.14em]'
-/** The nav links, a step up from LABEL so they read next to the bigger wordmark. */
+/** The nav links' type style, shared with the nav band in hero-nav.tsx. */
 const NAV_LABEL = 'font-mono text-sm uppercase tracking-[0.14em]'
 
 export function Hero() {
@@ -58,7 +50,7 @@ export function Hero() {
           className="hero-frame-in pointer-events-none absolute inset-0 z-20 border border-hero-ink"
         />
 
-        <HeroNav />
+        <HeroNavClient />
 
         <div className="relative flex flex-1 flex-col justify-end">
           {/* The field owns the space between the nav and the wordmark, and
@@ -124,60 +116,6 @@ export function Hero() {
         </div>
       </div>
     </section>
-  )
-}
-
-function HeroNav() {
-  return (
-    <nav
-      aria-label="Main"
-      className="relative z-30 flex items-center gap-8 border-b border-hero-ink px-4 py-3 sm:px-8"
-    >
-      <Link href="/" className="flex items-center gap-2.5" aria-label="ScanlyFix — home">
-        <LogoBadge size={42} />
-        <span className="font-mono text-2xl font-semibold uppercase tracking-tight">scanlyfix</span>
-      </Link>
-
-      <div className="flex-1" />
-
-      <ul className={`hidden items-center gap-9 md:flex ${NAV_LABEL}`}>
-        {NAV_LINKS.map(({ href, label }) => (
-          <li key={href}>
-            <Link href={href} className="hero-link relative">
-              {label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-
-      <a href="#scan" className={`hero-link relative hidden sm:inline ${NAV_LABEL}`}>
-        Scan a site →
-      </a>
-
-      {/* A disclosure, not a scripted menu: it is a real button, it is keyboard
-          operable, it closes on Escape, and it ships no JavaScript. */}
-      <details className="hero-menu relative md:hidden">
-        <summary
-          aria-label="Open menu"
-          className="flex size-8 cursor-pointer items-center justify-center border border-hero-ink"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-            <path d="M4 7h16" />
-            <path d="M4 12h16" />
-            <path d="M4 17h16" />
-          </svg>
-        </summary>
-        <ul className={`absolute right-0 top-10 z-40 w-48 border border-hero-ink bg-brand ${NAV_LABEL}`}>
-          {[...NAV_LINKS, { href: '/#scan', label: 'Scan a site →' }].map(({ href, label }) => (
-            <li key={href} className="border-b border-hero-ink last:border-0">
-              <Link href={href} className="block px-4 py-3">
-                {label}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </details>
-    </nav>
   )
 }
 
