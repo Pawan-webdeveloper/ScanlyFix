@@ -25,8 +25,20 @@ const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', dis
 const sans = Geist({ subsets: ['latin'], variable: '--font-geist-sans', display: 'swap' })
 const sansFallback = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' })
 
+/**
+ * The canonical origin for absolute metadata URLs (og-image, canonical).
+ *
+ * Deliberately NO `?? 'http://localhost:3000'` fallback: that default made a
+ * deploy that forgot NEXT_PUBLIC_APP_URL silently advertise localhost in its
+ * og tags and canonical links to every visitor. When the variable is unset,
+ * metadataBase is left unset too and Next resolves relative URLs against the
+ * request's own origin — so localhost only ever appears to someone actually
+ * on localhost.
+ */
+const appUrl = process.env['NEXT_PUBLIC_APP_URL']
+
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000'),
+  ...(appUrl ? { metadataBase: new URL(appUrl) } : {}),
   title: {
     default: 'ScanlyFix — everything wrong with your website, and the prompt that fixes it',
     template: '%s · ScanlyFix',

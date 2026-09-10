@@ -21,7 +21,7 @@ import { buildInstallUrl, requestOrigin } from '@/lib/github-connect.ts'
 import { PageHeader } from '@/components/console/page-header.tsx'
 import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
-import { ScanRepoButton } from './scan-repo-button.tsx'
+import { RepoScanButton } from '@/components/console/repo-scan-button.tsx'
 
 export const metadata = { title: 'Feed' }
 
@@ -186,20 +186,26 @@ export default async function FeedPage({
                 <li
                   key={repo.id}
                   data-reveal-item=""
-                  className={index === 0 ? '' : 'border-t border-c-line/60'}
+                  className={`group ${index === 0 ? '' : 'border-t border-c-line/60'}`}
                 >
                   <div className="flex items-center gap-4 px-6 py-5">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-c-soft text-c-muted">
-                      <Icon name="repo" size={18} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[15px] font-medium text-c-ink">
-                        {repo.fullName}
-                      </p>
-                      <p className="truncate text-[13px] text-c-muted">
-                        {repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}
-                      </p>
-                    </div>
+                    <Link
+                      href={`/repos/${repo.id}`}
+                      className="flex min-w-0 flex-1 items-center gap-4"
+                      title={`Open ${repo.fullName} report`}
+                    >
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-c-soft text-c-muted">
+                        <Icon name="repo" size={18} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[15px] font-medium text-c-ink transition-colors group-hover:text-c-brand-ink">
+                          {repo.fullName}
+                        </span>
+                        <span className="block truncate text-[13px] text-c-muted">
+                          {repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}
+                        </span>
+                      </span>
+                    </Link>
 
                     {/* Latest scan status */}
                     <div className="hidden shrink-0 text-right sm:block">
@@ -221,7 +227,7 @@ export default async function FeedPage({
                     </div>
 
                     {/* Scan buttons */}
-                    <ScanRepoButton repoId={repo.id} />
+                    <RepoScanButton repoId={repo.id} />
                   </div>
                 </li>
               ))}

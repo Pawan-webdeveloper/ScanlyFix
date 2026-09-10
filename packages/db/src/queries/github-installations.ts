@@ -31,11 +31,22 @@ export interface NewInstallationInput {
 }
 
 /**
- * Record an installation the user just completed. If we already have this
- * installation id (the user reinstalled, or the same GitHub account installed
- * twice), we keep the existing row and return it — an installation is a fact
- * about a GitHub grant, not a session, and re-issuing a row on a re-install
- * would orphan every scan and repo in the cascade delete.
+ * Record an installation the user just completed.
+ *
+ * If we already have this installation id (the user reinstalled, or the same
+ * GitHub account installed twice), we keep the existing ROW and return it — an
+ * installation is a fact about a GitHub grant, not a session, and re-issuing a
+ * row on a re-install would orphan every scan and repo in the cascade delete.
+ *
+ * Ownership, however, follows the person who JUST completed the install.
+ * GitHub hands back the SAME installation id when the same GitHub account is
+ * installed again, and a person who signs in with a different email is a
+ * different app user (different users.id). Without reassignment, someone who
+ * installed the app under one address and later signs in with another — the
+ * classic "I logged in again and my repo is gone" — would see an empty feed
+ * forever: the row exists, it is just keyed to the other account, and GitHub
+ * keeps reusing the same installation id so a fresh install never creates a
+ * new row either.
  */
 export async function upsertInstallation(
   viewer: Viewer,
@@ -46,7 +57,23 @@ export async function upsertInstallation(
   const existing = await db.query.githubInstallations.findFirst({
     where: eq(githubInstallations.installationId, input.installationId),
   })
-  if (existing) return existing
+  if (existing) {
+    if (existing.userId !== viewer.userId) {
+      const [updated] = await db
+        .update(githubInstallations)
+        .set({
+          userId: viewer.userId,
+          // The account the grant actually belongs to, refreshed from GitHub
+          // in case the same installation was reached through a rename.
+          accountLogin: input.accountLogin,
+          accountType: input.accountType,
+        })
+        .where(eq(githubInstallations.id, existing.id))
+        .returning()
+      return updated ?? existing
+    }
+    return existing
+  }
   const row: NewGithubInstallation = {
     userId: viewer.userId,
     installationId: input.installationId,
