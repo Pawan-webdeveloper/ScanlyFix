@@ -47,7 +47,22 @@ export async function POST(
     return NextResponse.json({ error: 'Monitor not found' }, { status: 404 })
   }
 
-  // 1. Dispatch event to Inngest queue
+  // 1. For uptime monitors: run the probe immediately so user sees live update without waiting for queue lag
+  let immediateProbeRan = false
+  if (monitor.type === 'uptime') {
+    try {
+      await executeUptimeProbe({
+        monitorId: monitor.id,
+        projectId: project.id,
+        url: project.url,
+      })
+      immediateProbeRan = true
+    } catch (probeErr) {
+      console.warn(`[api/monitors/run] Immediate probe execution skipped or failed:`, probeErr)
+    }
+  }
+
+  // 2. Dispatch event to Inngest queue (for queue observability and background workers)
   try {
     await inngest.send({
       name: EVENTS.monitorDue,
@@ -60,28 +75,18 @@ export async function POST(
       },
     })
   } catch (error) {
-    console.error(`[api/monitors/run] Failed to dispatch monitor ${monitor.id}:`, error)
-    return NextResponse.json(
-      {
-        error:
-          process.env.NODE_ENV !== 'production'
-            ? 'Background queue is unreachable. In development, please make sure Inngest Dev Server is running (`npx inngest-cli@latest dev`).'
-            : 'The background queue is currently unavailable. Please try again later.',
-      },
-      { status: 500 },
-    )
-  }
-
-  // 2. For uptime monitors: run the probe immediately so user sees live update without waiting for queue lag
-  if (monitor.type === 'uptime') {
-    try {
-      await executeUptimeProbe({
-        monitorId: monitor.id,
-        projectId: project.id,
-        url: project.url,
-      })
-    } catch (probeErr) {
-      console.warn(`[api/monitors/run] Immediate probe execution skipped or failed:`, probeErr)
+    console.warn(`[api/monitors/run] Inngest dispatch failed for monitor ${monitor.id}:`, error)
+    // If the monitor probe didn't run immediately (e.g. non-uptime monitor or probe failure), return 500
+    if (!immediateProbeRan) {
+      return NextResponse.json(
+        {
+          error:
+            process.env.NODE_ENV !== 'production'
+              ? 'Background queue is unreachable. In development, please make sure Inngest Dev Server is running (`npx inngest-cli@latest dev`).'
+              : 'The background queue is currently unavailable. Please try again later.',
+        },
+        { status: 500 },
+      )
     }
   }
 

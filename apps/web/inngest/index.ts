@@ -16,6 +16,7 @@ import { runRepoScanQueued } from './functions/run-repo-scan.ts'
 import { webVitalsProbe } from './functions/web-vitals-probe.ts'
 import { rollupWorker } from './functions/rollup-worker.ts'
 import { autoResolveStaleIncidents } from './functions/auto-resolve-stale-incidents.ts'
+import { runtimeAuthProber } from './functions/runtime-auth-prober.ts'
 
 export const functions = [
   sweepMonitors,
@@ -28,4 +29,5 @@ export const functions = [
   webVitalsProbe,
   rollupWorker,
   autoResolveStaleIncidents,
+  runtimeAuthProber,
 ]

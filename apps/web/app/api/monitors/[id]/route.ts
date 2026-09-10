@@ -41,12 +41,16 @@ export async function GET(
       return NextResponse.json({ error: 'Monitor not found' }, { status: 404 })
     }
 
-    // Auto-probe if monitor is due: ensures active users see real-time status
+    // Auto-probe if monitor is due OR if monitor is marked down and >=15s have elapsed since last check
+    const timeSinceLastRun = monitor.lastRunAt
+      ? Date.now() - monitor.lastRunAt.getTime()
+      : Infinity
     const isDue =
       monitor.enabled &&
       monitor.type === 'uptime' &&
       (!monitor.lastRunAt ||
-        Date.now() - monitor.lastRunAt.getTime() >= monitor.intervalS * 1000)
+        timeSinceLastRun >= monitor.intervalS * 1000 ||
+        (monitor.lastStatus === 'down' && timeSinceLastRun >= 15_000))
 
     if (isDue) {
       try {

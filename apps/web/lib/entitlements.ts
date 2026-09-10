@@ -63,3 +63,19 @@ export async function entitlementsFor(viewer: Viewer): Promise<Entitlements> {
     priorities: context?.priorities ?? null,
   }
 }
+
+/**
+ * Runtime auth prober access gate — Pro feature.
+ * Returns true if the project owner has Pro plan.
+ */
+export async function hasRuntimeAccess(viewer: Viewer, projectId: string): Promise<boolean> {
+  if (viewer.kind !== 'user') return false
+
+  const { getProject } = await import('@scanlyfix/db')
+  const project = await getProject(projectId, viewer)
+  if (!project) return false
+
+  const context = await getUserContext(viewer.userId)
+  const plan = planFor(context?.plan)
+  return plan.id === 'pro' || plan.fullFindings || process.env.NODE_ENV !== 'production'
+}
