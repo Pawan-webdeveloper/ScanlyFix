@@ -10,6 +10,7 @@ import {
   projects,
 } from '@scanlyfix/db'
 import { parseAlertConfig, type AlertConfig } from '@/lib/alert-threshold.ts'
+import { executeUptimeProbe } from '@/lib/uptime-probe-core.ts'
 import { MonitoringDetail } from '@/components/monitors/monitoring-detail.tsx'
 import { UptimeHeader } from '@/components/console/uptime-header.tsx'
 import { UptimeView } from '@/components/monitors/uptime-view.tsx'
@@ -54,13 +55,38 @@ export default async function MonitorDetailPage({ params }: Props) {
   const viewer = await getViewer()
   if (viewer.kind !== 'user') notFound()
 
-  const monitors = await listMonitorsForUser(viewer)
-  const monitor = monitors.find((m) => m.id === id)
+  let monitors = await listMonitorsForUser(viewer)
+  let monitor = monitors.find((m) => m.id === id)
   if (!monitor) notFound()
 
   if (monitor.type === 'domain') {
     // SSL & Domain detail uses the existing component — unchanged.
     return <DomainMonitorPage monitorId={monitor.id} projectName={monitor.projectName} projectUrl={monitor.projectUrl} />
+  }
+
+  // If monitor is uptime and currently marked down (or due), probe now so SSR renders fresh live status
+  if (monitor.type === 'uptime' && monitor.enabled) {
+    const timeSinceLastRun = monitor.lastRunAt
+      ? Date.now() - monitor.lastRunAt.getTime()
+      : Infinity
+    const shouldProbe =
+      !monitor.lastRunAt ||
+      timeSinceLastRun >= monitor.intervalS * 1000 ||
+      (monitor.lastStatus === 'down' && timeSinceLastRun >= 15_000)
+
+    if (shouldProbe) {
+      try {
+        await executeUptimeProbe({
+          monitorId: monitor.id,
+          projectId: monitor.projectId,
+          url: monitor.projectUrl,
+        })
+        monitors = await listMonitorsForUser(viewer)
+        monitor = monitors.find((m) => m.id === id) ?? monitor
+      } catch (probeErr) {
+        console.warn(`[monitors/${id}/page] SSR auto-probe failed:`, probeErr)
+      }
+    }
   }
 
   // Resolve slug + open incident + alert config in parallel.

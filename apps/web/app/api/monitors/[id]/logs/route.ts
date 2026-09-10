@@ -12,13 +12,16 @@ import { getViewer } from '@/lib/authz.ts'
 import type { MonitorLogsResponse } from '@scanlyfix/db/types/monitor-diff.ts'
 
 // ─── Query params schema ───────────────────────────────────────────────────────
-// WHY Zod validate: URL params string hote hain — unsafe assume mat karo
+// WHY Zod validate: URL params string hote hain — safely parse aur clamp karo
 const QuerySchema = z.object({
   limit: z
     .string()
     .optional()
-    .transform((v) => (v ? parseInt(v, 10) : 50))
-    .pipe(z.number().int().min(1).max(200)),
+    .transform((v) => {
+      const n = v ? parseInt(v, 10) : 50
+      if (isNaN(n) || n < 1) return 50
+      return Math.min(n, 5000)
+    }),
 })
 
 export async function GET(

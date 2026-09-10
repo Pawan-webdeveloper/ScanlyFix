@@ -1466,8 +1466,8 @@ export async function recentEventsWithDiff(
 ): Promise<MonitorLogEntry[]> {
 
   // ── Input sanitization ──────────────────────────────────────────────────────
-  const safeLimit = Math.min(Math.max(1, limit), 200)
-  // WHY cap at 200: koi bhi 10k rows pull na kar sake accidentally
+  const safeLimit = Math.min(Math.max(1, limit), 5000)
+  // WHY cap at 5000: timeline displays can fetch historical events while still capping unbounded queries
 
   // ── Authorization ───────────────────────────────────────────────────────────
   // WHY pehle auth check: DB se unnecessary data pull karne se pehle

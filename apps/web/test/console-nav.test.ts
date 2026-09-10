@@ -27,6 +27,7 @@ const REAL_ROUTES = new Set([
   '/scan/start',
   '/monitors',
   '/monitoring',
+  '/runtime',
 ])
 
 describe('console nav', () => {
