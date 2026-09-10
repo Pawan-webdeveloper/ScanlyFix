@@ -19,11 +19,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockViewer, mockFindFirst, mockGetProject, mockSendInngest } = vi.hoisted(() => ({
+const { mockViewer, mockFindFirst, mockGetProject, mockSendInngest, mockExecuteUptimeProbe } = vi.hoisted(() => ({
   mockViewer: vi.fn(),
   mockFindFirst: vi.fn(),
   mockGetProject: vi.fn(),
   mockSendInngest: vi.fn(),
+  mockExecuteUptimeProbe: vi.fn(),
 }))
 
 vi.mock('@/lib/authz.ts', () => ({
@@ -45,6 +46,10 @@ vi.mock('@/lib/inngest.ts', () => ({
   EVENTS: { monitorDue: 'scanlyfix/monitor.due' },
 }))
 
+vi.mock('@/lib/uptime-probe-core.ts', () => ({
+  executeUptimeProbe: (...args: unknown[]) => mockExecuteUptimeProbe(...args),
+}))
+
 const { POST } = await import('../app/api/monitors/[id]/run/route.ts')
 
 const USER = { kind: 'user', userId: 'usr-1' }
@@ -60,6 +65,7 @@ beforeEach(() => {
   mockFindFirst.mockReset()
   mockGetProject.mockReset()
   mockSendInngest.mockReset()
+  mockExecuteUptimeProbe.mockReset()
 })
 
 afterEach(() => {
@@ -171,11 +177,11 @@ describe('POST /api/monitors/[id]/run', () => {
     expect((payload as { data: { type: string } }).data.type).toBe('domain')
   })
 
-  it('returns 500 when inngest.send fails (queue is down)', async () => {
+  it('returns 500 when inngest.send fails and no immediate probe ran', async () => {
     mockViewer.mockResolvedValue(USER)
     mockFindFirst.mockResolvedValue({
       id: MONITOR_ID,
-      type: 'uptime',
+      type: 'domain',
       enabled: true,
       projectId: 'proj-1',
     })
@@ -190,5 +196,28 @@ describe('POST /api/monitors/[id]/run', () => {
     expect(res.status).toBe(500)
     const body = await res.json()
     expect(body.error).toMatch(/unreachable|unavailable/i)
+  })
+
+  it('returns 200 for uptime monitor when immediate probe succeeds even if inngest.send fails', async () => {
+    mockViewer.mockResolvedValue(USER)
+    mockFindFirst.mockResolvedValue({
+      id: MONITOR_ID,
+      type: 'uptime',
+      enabled: true,
+      projectId: 'proj-1',
+    })
+    mockGetProject.mockResolvedValue({
+      id: 'proj-1',
+      url: 'https://example.com',
+      ownerId: USER.userId,
+    })
+    mockExecuteUptimeProbe.mockResolvedValue({ ok: true })
+    mockSendInngest.mockRejectedValue(new Error('fetch failed (ECONNREFUSED)'))
+
+    const res = await POST(new Request('https://app.test/api/monitors/x/run', { method: 'POST' }), ctx())
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual({ ok: true, monitorId: MONITOR_ID })
+    expect(mockExecuteUptimeProbe).toHaveBeenCalledTimes(1)
   })
 })

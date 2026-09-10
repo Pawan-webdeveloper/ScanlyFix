@@ -1,0 +1,206 @@
+import {
+  and,
+  desc,
+  eq,
+  isNotNull,
+  isNull,
+  sql,
+} from 'drizzle-orm';
+
+import { db } from '../client.ts';
+import { projects, runtimeProberFindings, runtimeProberTargets, users } from '../schema.ts';
+
+// ── ADAPT (sirf is function me): apne schema ke actual column names use karo.
+//    Tumhare paas migration 0004_domain_verification already hai —
+//    'verifiedAt' ko apne verified-flag column se replace karo.
+export type RuntimeProjectContext = {
+  id: string;
+  /** Host only, e.g. "app.example.com" — scheme nahi, path nahi. */
+  hostname: string;
+  isVerified: boolean;
+};
+
+export async function getRuntimeProjectContext(projectId: string): Promise<RuntimeProjectContext | null> {
+  const [row] = await db
+    .select({
+      id: projects.id,
+      url: projects.url,        // ADAPT: project ka domain column
+      verifiedAt: projects.verifiedAt, // ADAPT: verification column
+    })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  if (!row?.url) return null;
+  const isDev = process.env.NODE_ENV !== 'production';
+  return {
+    id: row.id,
+    hostname: safeHostname(row.url),
+    isVerified: row.verifiedAt !== null || isDev,
+  };
+}
+
+function safeHostname(raw: string): string {
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    return '';
+  }
+}
+
+// ── Targets ──────────────────────────────────────────────────
+
+export type NewProberTarget = { path: string; method: string; source: 'default' | 'guard' | 'manual' };
+
+export async function listProberTargets(projectId: string) {
+  return db
+    .select()
+    .from(runtimeProberTargets)
+    .where(eq(runtimeProberTargets.projectId, projectId))
+    .orderBy(runtimeProberTargets.path);
+}
+
+export async function seedProberTargets(projectId: string, targets: NewProberTarget[]): Promise<void> {
+  if (targets.length === 0) return;
+  await db
+    .insert(runtimeProberTargets)
+    .values(targets.map((t) => ({ projectId, ...t })))
+    .onConflictDoNothing(); // re-run safe — duplicate seed kuch nahi bigadega
+}
+
+export async function setBaseline(targetId: string, status: number): Promise<void> {
+  await db
+    .update(runtimeProberTargets)
+    .set({ baselineStatus: status, baselineAt: new Date(), lastCheckedAt: new Date(), lastActualStatus: status })
+    .where(eq(runtimeProberTargets.id, targetId));
+}
+
+export async function recordCheck(targetId: string, status: number): Promise<void> {
+  await db
+    .update(runtimeProberTargets)
+    .set({ lastCheckedAt: new Date(), lastActualStatus: status })
+    .where(eq(runtimeProberTargets.id, targetId));
+}
+
+// ── Findings ─────────────────────────────────────────────────
+
+export async function findUnresolvedFinding(projectId: string, path: string, method: string) {
+  const [row] = await db
+    .select()
+    .from(runtimeProberFindings)
+    .where(
+      and(
+        eq(runtimeProberFindings.projectId, projectId),
+        eq(runtimeProberFindings.path, path),
+        eq(runtimeProberFindings.method, method),
+        isNull(runtimeProberFindings.resolvedAt),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+export async function insertFinding(input: {
+  projectId: string;
+  targetId: string;
+  path: string;
+  method: string;
+  baselineStatus: number;
+  actualStatus: number;
+  severity: 'critical' | 'high';
+}) {
+  const [row] = await db.insert(runtimeProberFindings).values(input).returning();
+  return row;
+}
+
+export async function touchFinding(findingId: string): Promise<void> {
+  await db
+    .update(runtimeProberFindings)
+    .set({ updatedAt: new Date() })
+    .where(eq(runtimeProberFindings.id, findingId));
+}
+
+/** Darwaza wapas lock ho gaya? Finding khud-ba-khud resolve. */
+export async function autoResolveFinding(findingId: string): Promise<void> {
+  await db
+    .update(runtimeProberFindings)
+    .set({ resolvedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(runtimeProberFindings.id, findingId), isNull(runtimeProberFindings.resolvedAt)));
+}
+
+export async function resolveFindingManually(findingId: string, projectId: string): Promise<void> {
+  await db
+    .update(runtimeProberFindings)
+    .set({ resolvedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(runtimeProberFindings.id, findingId), eq(runtimeProberFindings.projectId, projectId)));
+}
+
+export async function listFindings(projectId: string, onlyOpen: boolean) {
+  const where = onlyOpen
+    ? and(eq(runtimeProberFindings.projectId, projectId), isNull(runtimeProberFindings.resolvedAt))
+    : eq(runtimeProberFindings.projectId, projectId);
+  return db.select().from(runtimeProberFindings).where(where).orderBy(desc(runtimeProberFindings.createdAt)).limit(100);
+}
+
+export async function countOpenFindings(projectId: string): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(runtimeProberFindings)
+    .where(and(eq(runtimeProberFindings.projectId, projectId), isNull(runtimeProberFindings.resolvedAt)));
+  return row?.n ?? 0;
+}
+
+// ── Nightly eligibility: jinke paas baseline hai, sirf unko probe karo ──
+
+export async function listProberEligibleProjectIds(): Promise<string[]> {
+  const isDev = process.env.NODE_ENV !== 'production';
+  const condition = isDev
+    ? isNotNull(runtimeProberTargets.baselineStatus)
+    : and(isNotNull(runtimeProberTargets.baselineStatus), isNotNull(projects.verifiedAt));
+
+  const rows = await db
+    .selectDistinct({ id: runtimeProberTargets.projectId })
+    .from(runtimeProberTargets)
+    .innerJoin(projects, eq(projects.id, runtimeProberTargets.projectId))
+    .where(condition);
+  return rows.map((r) => r.id);
+}
+
+// ── Owner email for alerts ──────────────────────────────────────
+
+export async function getProjectOwnerEmail(projectId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ email: users.email })
+    .from(projects)
+    .innerJoin(users, eq(users.id, projects.ownerId))
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  return row?.email ?? null;
+}
+
+
+
+// guard
+
+/**
+ * source upgrade: 'default' (guess) → 'guard' (real data).
+ * 'manual' user-ki-choice hai — kabhi overwrite nahi hota.
+ */
+export async function upgradeProberTargetSource(
+  projectId: string,
+  targets: ReadonlyArray<{ path: string; method: string }>,
+): Promise<void> {
+  for (const t of targets) {
+    await db
+      .update(runtimeProberTargets)
+      .set({ source: 'guard' })
+      .where(
+        and(
+          eq(runtimeProberTargets.projectId, projectId),
+          eq(runtimeProberTargets.path, t.path),
+          eq(runtimeProberTargets.method, t.method),
+          eq(runtimeProberTargets.source, 'default'), // ⭐ sirf default ko chhoo kar guard banao
+        ),
+      );
+  }
+}

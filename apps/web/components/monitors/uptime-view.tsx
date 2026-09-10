@@ -162,6 +162,8 @@ export function UptimeView(props: UptimeViewProps) {
         // Confirmed down — an open incident is ground truth.
         setStatus('down')
         setDownSince(open.startedAt)
+      } else {
+        setDownSince(null)
       }
       // Note: we do NOT reset to 'up' here when there is no open incident.
       // loadLiveStatus is the authority for the live up/down/stale state;

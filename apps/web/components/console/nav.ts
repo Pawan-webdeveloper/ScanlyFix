@@ -68,7 +68,7 @@ export const NAV: readonly NavSection[] = [
   },
   {
     title: 'PROTECT',
-    items: [{ label: 'Runtime', icon: 'shield', soon: true }],
+    items: [{ label: 'Runtime', icon: 'shield', href: '/runtime' }],
   },
   {
     title: 'MORE',

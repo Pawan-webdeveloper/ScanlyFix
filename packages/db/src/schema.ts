@@ -1100,6 +1100,91 @@ export const dnsSnapshots = pgTable(
 
 
 
+
+
+// ─────────────────────────────────────────────────────────────
+// RUNTIME — AUTH PROBER
+// ─────────────────────────────────────────────────────────────
+
+/** Paths we probe nightly. Baseline is per-target — naya target
+ *  pehli raat sirf record hota hai, judge nahi hota. */
+export const runtimeProberTargets = pgTable(
+  'runtime_prober_targets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    path: text('path').notNull(),
+    method: text('method').notNull().default('GET'),
+    /** 'default' = common-path guess · 'guard' = SDK se real route (Phase 2) · 'manual' */
+    source: text('source').notNull().default('default'),
+    /** null = baseline abhi record nahi hua */
+    baselineStatus: integer('baseline_status'),
+    baselineAt: timestamp('baseline_at', { withTimezone: true }),
+    lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    lastActualStatus: integer('last_actual_status'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('runtime_prober_targets_uq').on(t.projectId, t.path, t.method)],
+);
+
+/** Ek finding = "ye darwaza locked tha, ab khula hai". Resolved hone
+ *  ke baad re-find ho sakta hai — isliye unique constraint nahi lagayi. */
+export const runtimeProberFindings = pgTable(
+  'runtime_prober_findings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    targetId: uuid('target_id').references(() => runtimeProberTargets.id, { onDelete: 'set null' }),
+    path: text('path').notNull(),
+    method: text('method').notNull().default('GET'),
+    baselineStatus: integer('baseline_status').notNull(),
+    actualStatus: integer('actual_status').notNull(),
+    /** 'critical' = sensitive path (/admin, /api/*) · 'high' = baaki */
+    severity: text('severity').notNull().default('high'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('runtime_prober_findings_project_idx').on(t.projectId, t.resolvedAt)],
+);
+
+
+
+// Guard
+export const runtimeRoutes = pgTable(
+  'runtime_routes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    pattern: text('pattern').notNull(),
+    method: text('method').notNull(),
+    kind: text('kind').notNull().default('route'), // 'route' | 'server_action'
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('runtime_routes_identity_uq').on(t.projectId, t.pattern, t.method)],
+);
+
+export const runtimeRouteStats = pgTable(
+  'runtime_route_stats',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    routeId: uuid('route_id').notNull().references(() => runtimeRoutes.id, { onDelete: 'cascade' }),
+    hour: timestamp('hour', { withTimezone: true }).notNull(),
+    withSession: integer('with_session').notNull().default(0),
+    withoutSession: integer('without_session').notNull().default(0),
+  },
+  (t) => [uniqueIndex('runtime_route_stats_uq').on(t.routeId, t.hour)],
+);
+
+
+
+
+
 /* -------------------------------------------------------------------------- */
 /* Relations — required for the `db.query.*` API. `.references()` alone only   */
 /* emits the SQL constraint; it does not teach Drizzle how to join.           */
