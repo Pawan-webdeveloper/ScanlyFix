@@ -58,6 +58,7 @@ describe('generateFix', () => {
 
   it('asks with the master prompt plus the finding, and returns the prompt', async () => {
     vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+    vi.stubEnv('FIXES_MODEL', '')
     let authorization = ''
     let requestBody: Record<string, unknown> | undefined
     mockModel(async ({ request }) => {
