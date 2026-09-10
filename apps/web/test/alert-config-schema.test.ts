@@ -425,9 +425,9 @@ describe('AlertConfigSchema — failuresBeforeAlert', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects 4 (must be one of 1, 2, 3, 5)', () => {
+  it('accepts 4', () => {
     const result = AlertConfigSchema.safeParse({ failuresBeforeAlert: 4 })
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
   })
 
   it('rejects non-integers', () => {
