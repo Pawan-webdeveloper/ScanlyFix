@@ -15,6 +15,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
+    "@google/genai": "^2.22.0",
     "@scanlyfix/checks": "workspace:*",
     "@scanlyfix/db": "workspace:*",
     "@scanlyfix/repo-checks": "workspace:*",

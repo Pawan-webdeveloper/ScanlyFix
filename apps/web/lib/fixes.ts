@@ -3,7 +3,7 @@
  *
  * This used to be a separate service (apps/fixes on :8082) that the web app
  * called over HTTP. That hop bought nothing the process boundary already
- * gives: this module is `server-only`, so OPENROUTER_API_KEY stays out of the
+ * gives: this module is `server-only`, so AUTOFIX_GEMINI_API stays out of the
  * client bundle exactly as it stayed out of the browser when a second process
  * held it. The extra server was one more thing to start (and forget to start —
  * every "Could not reach the fix writer" was that), so the model call now
@@ -20,6 +20,7 @@
  */
 
 import 'server-only'
+import { ApiError, GoogleGenAI, type GenerateContentResponse } from '@google/genai'
 import { serverEnv } from './env.ts'
 
 /** Enough of a finding for the model to write a real work order. */
@@ -54,7 +55,7 @@ export function fixFailure(reason: FixFailureReason): {
 } {
   const messages: Record<FixFailureReason, string> = {
     unconfigured:
-      'Fix prompts are not configured on this deployment. Set OPENROUTER_API_KEY.',
+      'Fix prompts are not configured on this deployment. Set AUTOFIX_GEMINI_API.',
     busy: 'The model is throttling right now. Try again in a moment.',
     upstream: 'The model could not write a fix prompt. Try again.',
     network: 'Could not reach the AI model. Check your connection and try again.',
@@ -99,12 +100,21 @@ Rules:
 - At most ~200 words. Plain text. Every sentence either locates the problem, fixes it, or verifies the fix.`
 
 /** The free-tier model, tested live before wiring. Override with FIXES_MODEL. */
-const DEFAULT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free'
+const DEFAULT_MODEL = 'gemini-2.5-flash'
+
+/**
+ * The free tier's throttles are per-model, so the failures another model could
+ * survive fall through to the next-cheapest free Gemini. A fixed list rather
+ * than a discovered one: Google's catalogue is curated (no embed/guard strays
+ * to filter out), and one fallback covers the per-model 429/5xx storms without
+ * an extra network call to enumerate models on every failure.
+ */
+const FALLBACK_MODELS = ['gemini-2.5-flash-lite'] as const
 
 /**
  * What a completion attempt can conclude with. `canFallback` marks the
  * failures where a DIFFERENT model plausibly succeeds: the free tier's 429s
- * are per-model, and a 5xx or an empty completion is one provider having a
+ * are per-model, and a 5xx or an empty completion is one model having a
  * bad moment. Key-level refusals (401/402/403) fail for every model, so they
  * end the attempt chain — retrying a rejected key against other models just
  * multiplies the wait.
@@ -113,112 +123,75 @@ type Attempt =
   | { ok: true; prompt: string }
   | { ok: false; reason: FixFailureReason; canFallback: boolean }
 
-/** A completion is ~200 words; the ceiling exists so a runaway becomes a failure, not a bill. Reasoning models spend completion tokens thinking before they write, so the ceiling has to leave room for the thinking too. */
-const MAX_TOKENS = 1500
+/**
+ * A fix prompt is ~200 words; the ceiling exists so a runaway becomes a
+ * failure, not a bill. Thinking is disabled outright (flash supports a zero
+ * budget): the master prompt already pins the format, a thinking pass would
+ * burn free-tier tokens before the first word, and with it off the ceiling
+ * never competes with reasoning for output room.
+ */
+const MAX_TOKENS = 1200
+
+/**
+ * The user content for one request: the finding as JSON. Pure, so the exact
+ * wording leaving the backend is asserted by a test rather than reviewed by
+ * hope. The master prompt rides separately, as the system instruction.
+ */
+export function buildUserPrompt(finding: FixFinding): string {
+  return JSON.stringify({
+    siteUrl: finding.siteUrl ?? null,
+    checkId: finding.checkId,
+    pillar: finding.category,
+    severity: finding.severity,
+    title: finding.title,
+    description: finding.description ?? null,
+    evidence: finding.evidence ?? null,
+    remediationHint: finding.remediation ?? null,
+  })
+}
 
 async function attemptModel(model: string, finding: FixFinding): Promise<Attempt> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   timer.unref()
 
-  let response: Response
+  let response: GenerateContentResponse
   try {
-    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${serverEnv.openrouterApiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: buildMessages(finding),
-        max_tokens: MAX_TOKENS,
+    const ai = new GoogleGenAI({ apiKey: serverEnv.autofixGeminiApiKey })
+    response = await ai.models.generateContent({
+      model,
+      contents: buildUserPrompt(finding),
+      config: {
+        systemInstruction: MASTER_PROMPT,
         temperature: 0.2,
-      }),
-      signal: controller.signal,
+        maxOutputTokens: MAX_TOKENS,
+        thinkingConfig: { thinkingBudget: 0 },
+        abortSignal: controller.signal,
+      },
     })
-  } catch {
-    return { ok: false, reason: 'network', canFallback: false }
-  } finally {
+  } catch (error) {
     clearTimeout(timer)
+    if (error instanceof ApiError) {
+      // Server-side log only: the visitor gets the generic sentence, the
+      // operator gets the status and enough of the message to act on.
+      console.error('gemini refused', error.status, String(error.message).slice(0, 300))
+      if (error.status === 429) return { ok: false, reason: 'busy', canFallback: true }
+      // 401/402/403 are properties of the KEY — another model changes nothing.
+      const keyLevel = error.status === 401 || error.status === 402 || error.status === 403
+      return { ok: false, reason: 'upstream', canFallback: !keyLevel }
+    }
+    // Everything the SDK throws that is not an HTTP refusal is transport
+    // trouble (timeout, DNS, aborted connection) — the retry button's domain.
+    return { ok: false, reason: 'network', canFallback: false }
   }
+  clearTimeout(timer)
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    // Server-side log only: the visitor gets the generic sentence, the
-    // operator gets the status and enough of the body to act on.
-    console.error('openrouter refused', response.status, body.slice(0, 300))
-    if (response.status === 429) return { ok: false, reason: 'busy', canFallback: true }
-    // 401/402/403 are properties of the KEY — another model changes nothing.
-    const keyLevel = response.status === 401 || response.status === 402 || response.status === 403
-    return { ok: false, reason: 'upstream', canFallback: !keyLevel }
-  }
-
-  let payload: unknown
-  try {
-    payload = await response.json()
-  } catch {
+  const text = typeof response.text === 'string' ? response.text.trim() : ''
+  if (text === '') {
     return { ok: false, reason: 'upstream', canFallback: true }
   }
 
-  const choice = (payload as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]
-    ?.message
-  if (typeof choice?.content !== 'string' || choice.content.trim() === '') {
-    return { ok: false, reason: 'upstream', canFallback: true }
-  }
-
-  return { ok: true, prompt: (choice.content as string).trim() }
-}
-
-/**
- * Free models come and go weekly, so the fallback chain is DISCOVERED at
- * failure time rather than hardcoded to rot: the public model list, the free
- * ids, minus the one that just failed and the non-chat strays, in a stable
- * order, two tries at most. An empty result means no fallback, which lands
- * the visitor where they started — the retry button.
- */
-const NON_CHAT = /(embed|rerank|guard|moderation|safety|omni|whisper|tts|image|video)/
-
-async function discoverAlternateModels(failed: string): Promise<string[]> {
-  try {
-    const response = await fetch('https://openrouter.ai/api/v1/models', {
-      signal: AbortSignal.timeout(5_000),
-    })
-    if (!response.ok) return []
-    const payload = (await response.json()) as { data?: Array<{ id?: unknown }> }
-    const ids = (payload.data ?? [])
-      .map((model) => model.id)
-      .filter((id): id is string => typeof id === 'string')
-    return ids
-      .filter((id) => id.endsWith(':free') && id !== failed && !NON_CHAT.test(id))
-      .sort()
-      .slice(0, 2)
-  } catch {
-    return []
-  }
-}
-
-/**
- * The message array for one request. Pure, so the exact wording leaving the
- * backend is asserted by a test rather than reviewed by hope.
- */
-export function buildMessages(finding: FixFinding): Array<{ role: 'system' | 'user'; content: string }> {
-  return [
-    { role: 'system', content: MASTER_PROMPT },
-    {
-      role: 'user',
-      content: JSON.stringify({
-        siteUrl: finding.siteUrl ?? null,
-        checkId: finding.checkId,
-        pillar: finding.category,
-        severity: finding.severity,
-        title: finding.title,
-        description: finding.description ?? null,
-        evidence: finding.evidence ?? null,
-        remediationHint: finding.remediation ?? null,
-      }),
-    },
-  ]
+  return { ok: true, prompt: text }
 }
 
 /** A slow model is worse than a failed one: the UI has a retry button, not a patience test. */
@@ -226,23 +199,19 @@ const TIMEOUT_MS = 45_000
 
 /**
  * One finding, one prompt: the configured model first, then — only on the
- * failures another model could survive — up to two live free alternates.
+ * failures another model could survive — the free fallback Gemini.
  *
  * Retries are still the CALLER's decision for the SAME model (the retry
- * button is a product behaviour, shown to a person); what changed is that a
- * single provider's bad moment no longer dead-ends the feature, because the
- * free tier's 5xx/429 storms are per-model, not per-account.
+ * button is a product behaviour, shown to a person); what this buys is that
+ * one model's bad moment no longer dead-ends the feature.
  */
 export async function generateFix(finding: FixFinding): Promise<FixGeneration> {
   if (!serverEnv.fixesConfigured) return { ok: false, reason: 'unconfigured' }
 
   const primary = serverEnv.fixesModel || DEFAULT_MODEL
-  const first = await attemptModel(primary, finding)
-  if (first.ok) return first
-  if (!first.canFallback) return { ok: false, reason: first.reason }
-
-  let last: FixFailureReason = first.reason
-  for (const model of await discoverAlternateModels(primary)) {
+  const chain = [primary, ...FALLBACK_MODELS.filter((model) => model !== primary)]
+  let last: FixFailureReason = 'upstream'
+  for (const model of chain) {
     const attempt = await attemptModel(model, finding)
     if (attempt.ok) return attempt
     if (!attempt.canFallback) return { ok: false, reason: attempt.reason }

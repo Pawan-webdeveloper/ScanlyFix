@@ -1,13 +1,13 @@
 /**
- * The model call behind the Fix button, against a mocked OpenRouter.
+ * The model call behind the Fix button, against a mocked Gemini API.
  *
  * The Fix button's whole contract rests on how this call fails: a throttle is
  * "busy" (retry), a refused completion is "upstream" (retry), an unreachable
  * model is "network" (retry), a missing key is "unconfigured" (never retry).
  * Every branch is pinned here so a change to one cannot silently bend the
  * button's behaviour. The request itself is asserted too — the master prompt
- * must ride along as the system message and the finding as the user message,
- * or the model writes generic advice instead of a work order.
+ * must ride along as the system instruction and the finding as the user
+ * content, or the model writes generic advice instead of a work order.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -26,7 +26,9 @@ const finding: FixFinding = {
   siteUrl: 'https://example.com',
 }
 
-const COMPLETIONS = 'https://openrouter.ai/api/v1/chat/completions'
+const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models'
+const endpoint = (model: string) => `${GEMINI}/${model}:generateContent`
+const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }))
 afterEach(() => {
@@ -35,17 +37,20 @@ afterEach(() => {
 })
 afterAll(() => server.close())
 
-const completion = (content: string) => ({ choices: [{ message: { content } }] })
+const completion = (content: string) => ({
+  candidates: [{ content: { parts: [{ text: content }] }, finishReason: 'STOP' }],
+})
 
-type ModelHandler = Parameters<typeof http.post>[1]
-
-function mockModel(handler: ModelHandler) {
-  server.use(http.post(COMPLETIONS, handler))
+/** Mock every model in the chain with the same handler. */
+function mockModel(handler: Parameters<typeof http.post>[1]) {
+  for (const model of MODELS) {
+    server.use(http.post(endpoint(model), handler))
+  }
 }
 
 describe('generateFix', () => {
   it('without a key the answer is unconfigured and no request leaves the process', async () => {
-    vi.stubEnv('OPENROUTER_API_KEY', '')
+    vi.stubEnv('AUTOFIX_GEMINI_API', '')
     let called = false
     mockModel(() => {
       called = true
@@ -57,12 +62,12 @@ describe('generateFix', () => {
   })
 
   it('asks with the master prompt plus the finding, and returns the prompt', async () => {
-    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+    vi.stubEnv('AUTOFIX_GEMINI_API', 'test-key')
     vi.stubEnv('FIXES_MODEL', '')
-    let authorization = ''
+    let apiKey = ''
     let requestBody: Record<string, unknown> | undefined
     mockModel(async ({ request }) => {
-      authorization = request.headers.get('authorization') ?? ''
+      apiKey = request.headers.get('x-goog-api-key') ?? ''
       requestBody = (await request.json()) as Record<string, unknown>
       return HttpResponse.json(completion('Add the Content-Security-Policy header …'))
     })
@@ -70,50 +75,56 @@ describe('generateFix', () => {
     const result = await generateFix(finding)
 
     expect(result).toEqual({ ok: true, prompt: 'Add the Content-Security-Policy header …' })
-    expect(authorization).toBe('Bearer test-key')
-    expect(requestBody?.model).toBe('nvidia/nemotron-3-ultra-550b-a55b:free')
-    // The ceiling has to leave room for reasoning models, which spend
-    // completion tokens thinking before they write (lib/fixes.ts).
-    expect(requestBody?.max_tokens).toBe(1500)
-    expect(requestBody?.temperature).toBe(0.2)
-    const messages = requestBody?.messages as Array<{ role: string; content: string }>
-    expect(messages[0]?.role).toBe('system')
-    expect(messages[0]?.content).toContain('You write fix prompts for ScanlyFix')
-    expect(messages[1]?.role).toBe('user')
-    expect(messages[1]?.content).toContain('"checkId":"security-csp-missing"')
-    expect(messages[1]?.content).toContain('"siteUrl":"https://example.com"')
+    expect(apiKey).toBe('test-key')
+    // The master prompt rides as the system instruction…
+    expect(JSON.stringify(requestBody?.systemInstruction)).toContain(
+      'You write fix prompts for ScanlyFix',
+    )
+    // …and the finding as the user content.
+    const parts = (requestBody?.contents as Array<{ parts: Array<{ text: string }> }>)[0]?.parts
+    const userFinding = JSON.parse(parts?.[0]?.text ?? '{}') as Record<string, unknown>
+    expect(userFinding.checkId).toBe('security-csp-missing')
+    expect(userFinding.siteUrl).toBe('https://example.com')
+    const config = requestBody?.generationConfig as Record<string, unknown>
+    expect(config?.temperature).toBe(0.2)
+    // Thinking is disabled outright: with it on, the thinking pass would burn
+    // free-tier tokens before the first word (lib/fixes.ts).
+    expect((config?.thinkingConfig as Record<string, unknown>)?.thinkingBudget).toBe(0)
+    expect(config?.maxOutputTokens).toBe(1200)
   })
 
-  it('maps the free tier throttle (429) to busy — retryable', async () => {
-    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+  it('maps the free tier throttle (429) to busy — retryable, after the fallback also throttles', async () => {
+    vi.stubEnv('AUTOFIX_GEMINI_API', 'test-key')
     mockModel(() => new HttpResponse(null, { status: 429 }))
     const result = await generateFix(finding)
     expect(result).toEqual({ ok: false, reason: 'busy' })
   })
 
   it('maps every other refusal to upstream — retryable', async () => {
-    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+    vi.stubEnv('AUTOFIX_GEMINI_API', 'test-key')
     mockModel(() => HttpResponse.json({ error: 'insufficient credits' }, { status: 402 }))
     const result = await generateFix(finding)
     expect(result).toEqual({ ok: false, reason: 'upstream' })
   })
 
-  it('maps an empty or malformed completion to upstream', async () => {
-    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+  it('maps an empty completion to upstream', async () => {
+    vi.stubEnv('AUTOFIX_GEMINI_API', 'test-key')
     mockModel(() => HttpResponse.json(completion('   ')))
     expect(await generateFix(finding)).toEqual({ ok: false, reason: 'upstream' })
 
     server.resetHandlers()
-    mockModel(() => HttpResponse.json({ choices: [] }))
-    expect(await generateFix(finding)).toEqual({ ok: false, reason: 'upstream' })
-
-    server.resetHandlers()
-    mockModel(() => new HttpResponse('not json', { status: 200 }))
+    mockModel(() => HttpResponse.json({ candidates: [] }))
     expect(await generateFix(finding)).toEqual({ ok: false, reason: 'upstream' })
   })
 
+  it('maps a malformed (non-JSON) answer to network', async () => {
+    vi.stubEnv('AUTOFIX_GEMINI_API', 'test-key')
+    mockModel(() => new HttpResponse('not json', { status: 200 }))
+    expect(await generateFix(finding)).toEqual({ ok: false, reason: 'network' })
+  })
+
   it('maps an unreachable model to network', async () => {
-    vi.stubEnv('OPENROUTER_API_KEY', 'test-key')
+    vi.stubEnv('AUTOFIX_GEMINI_API', 'test-key')
     mockModel(() => HttpResponse.error())
     const result = await generateFix(finding)
     expect(result).toEqual({ ok: false, reason: 'network' })
