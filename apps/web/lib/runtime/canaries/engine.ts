@@ -1,4 +1,5 @@
 import {
+  hasRecentDuplicateEvent,
   insertCanaryEvents,
   listCanaries,
   markCanariesSetup,
@@ -10,7 +11,7 @@ import { getCanaryProjectConfig } from '@scanlyfix/db';
 
 import { evaluateIntegrity } from './integrity';
 import { buildAnonAuditReport, evaluateAnonProbe, type AnonProbeResult } from './rls-probe';
-import { listTableNames, restSelect, type RestConfig } from './supabase-rest';
+import { listTableNames, restHeadCount, restSelect, type RestConfig } from './supabase-rest';
 import { CANARY_LOG_TABLE, CANARY_TABLE, MAX_AUDIT_TABLES, type CanaryDetection } from './types';
 
 export type CanaryRunSummary = {
@@ -35,17 +36,9 @@ export async function runCanaryCheck(projectId: string): Promise<CanaryRunSummar
 
   // 1) Integrity — canary rows + trigger log
   const rowsRes = await restSelect<{ marker: string; payload: unknown }>(rest, CANARY_TABLE, { query: 'select=marker,payload' });
-  const logRes = await restSelect<{ id: number }>(rest, CANARY_LOG_TABLE, { query: 'select=id', withCount: true });
 
-  if (!rowsRes.ok && rowsRes.status === 404) {
-    // Vault table hi nahi — user ne script revert/remove ki ya galat project connect hua
-    summary.detections.push({
-      kind: 'table_missing', source: 'integrity', canaryId: null,
-      detail: `${CANARY_TABLE} table Supabase me nahi mili — setup hata gaya ya connection galat hai`,
-    });
-  } else if (!rowsRes.ok && rowsRes.status === 0) {
-    // Unreachable — alarm nahi (app/server down ≠ breach)
-  } else {
+  if (rowsRes.ok && rowsRes.data) {
+    const logRes = await restSelect<{ id: number }>(rest, CANARY_LOG_TABLE, { query: 'select=id', withCount: true });
     summary.reachable = true;
     const result = evaluateIntegrity({
       snapshot: cfg.snapshot,
@@ -69,10 +62,25 @@ export async function runCanaryCheck(projectId: string): Promise<CanaryRunSummar
       }
     }
     summary.detections.push(...result.detections);
+  } else if (rowsRes.status === 404) {
+    // Vault table hi nahi — user ne script revert/remove ki ya galat project connect hua
+    summary.detections.push({
+      kind: 'table_missing', source: 'integrity', canaryId: null,
+      detail: `${CANARY_TABLE} table Supabase me nahi mili — setup hata gaya ya connection galat hai`,
+    });
+  } else {
+    // 401/403/5xx/timeout → summary.reachable = false, NO integrity evaluation, NO detections, NO snapshot refresh.
+    // Set lastIntegrity='unreachable' on canary rows so the UI can show a neutral status.
+    summary.reachable = false;
+    const canaries = await listCanaries(projectId);
+    for (const c of canaries) {
+      summary.integrity[c.markerToken] = 'unreachable';
+      await updateCanaryStatus(projectId, c.markerToken, c.status, 'unreachable');
+    }
   }
 
   // 2) RLS probe — anon key se vault padhne ki KOSHISH (deterministic read-check)
-  if (cfg.anonKey) {
+  if (cfg.anonKey && summary.reachable) {
     const probe: AnonProbeResult = await restSelect<unknown>(rest, CANARY_TABLE, { key: 'anon', limit: 1 }).then((r) => ({
       status: r.status,
       rowCount: r.data?.length ?? (r.status === 200 ? 0 : null),
@@ -81,13 +89,32 @@ export async function runCanaryCheck(projectId: string): Promise<CanaryRunSummar
     if (detection) summary.detections.push(detection);
   }
 
-  // 3) Persist events (dedupe-free — har detection asli occurrence hai; honeytoken apni route se aata hai)
-  if (summary.detections.length > 0) {
-    await insertCanaryEvents(
-      summary.detections.map((d) => ({
-        projectId, canaryId: d.canaryId, kind: d.kind, detail: d.detail, source: d.source,
-      })),
-    );
+  // 3) Persist events with deduplication (suppress duplicate alerts within 24h)
+  const rawDetections = summary.detections;
+  if (rawDetections.length > 0) {
+    const newDetections: CanaryDetection[] = [];
+    const seenInBatch = new Set<string>();
+
+    for (const d of rawDetections) {
+      const key = `${d.kind}::${d.detail}`;
+      if (seenInBatch.has(key)) continue;
+      seenInBatch.add(key);
+
+      const isDuplicate = await hasRecentDuplicateEvent(projectId, d.kind, d.detail, 24);
+      if (!isDuplicate) {
+        newDetections.push(d);
+      }
+    }
+
+    if (newDetections.length > 0) {
+      await insertCanaryEvents(
+        newDetections.map((d) => ({
+          projectId, canaryId: d.canaryId, kind: d.kind, detail: d.detail, source: d.source,
+        })),
+      );
+    }
+    // summary.detections reflects un-suppressed new detections so callers (alert email) only trigger for new items
+    summary.detections = newDetections;
   } else if (summary.reachable && summary.newSnapshot) {
     // Snapshot mirror refresh (tamper-evidence baseline fresh rahe)
     await markCanariesSetup(projectId, summary.newSnapshot);
@@ -116,13 +143,20 @@ export async function runAnonAccessAudit(projectId: string): Promise<{
   const EXCLUDE = new Set([CANARY_TABLE, CANARY_LOG_TABLE]);
   const scoped = tables.filter((t) => !EXCLUDE.has(t)).slice(0, MAX_AUDIT_TABLES);
 
-  const results = await Promise.all(
-    scoped.map(async (name) => {
-      // HEAD + Prefer: count=exact → sirf COUNT aata hai, koi data transfer nahi
-      const res = await restSelect<unknown>(rest, name, { key: 'anon', limit: 1, withCount: true });
-      return { name, anonCount: res.status === 200 ? (res.count ?? 0) : null };
-    }),
-  );
+  // Batch the per-table probes in groups of 8 (Promise.all chunks)
+  const CHUNK_SIZE = 8;
+  const results: Array<{ name: string; anonCount: number | null }> = [];
+  for (let i = 0; i < scoped.length; i += CHUNK_SIZE) {
+    const chunk = scoped.slice(i, i + CHUNK_SIZE);
+    const chunkResults = await Promise.all(
+      chunk.map(async (name) => {
+        // True zero-body probe using HTTP HEAD (Prefer: count=exact)
+        const res = await restHeadCount(rest, name);
+        return { name, anonCount: res.status === 200 ? (res.count ?? 0) : null };
+      }),
+    );
+    results.push(...chunkResults);
+  }
 
   return buildAnonAuditReport(results, EXCLUDE);
 }

@@ -200,5 +200,13 @@ describe('header-encryption', () => {
       // Should be in IV:TAG:CIPHERTEXT format
       expect(encrypted.split(':')).toHaveLength(3)
     })
+
+    it('gracefully falls back when HEADER_ENCRYPTION_KEY is unset without crashing', () => {
+      delete process.env.HEADER_ENCRYPTION_KEY
+      const plaintext = 'token-without-env'
+      const encrypted = encryptValue(plaintext)
+      expect(encrypted).toBeTruthy()
+      expect(decryptValue(encrypted)).toBe(plaintext)
+    })
   })
 })

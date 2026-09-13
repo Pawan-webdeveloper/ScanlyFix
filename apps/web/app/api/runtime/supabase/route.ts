@@ -5,7 +5,7 @@ import { clearSupabaseConnection, saveSupabaseConnection } from '@scanlyfix/db';
 import { getViewer } from '@/lib/authz';
 import { getProject } from '@scanlyfix/db';
 import { encryptValue } from '@/lib/header-encryption';
-import { isValidSupabaseUrl, restSelect } from '@/lib/runtime/canaries/supabase-rest';
+import { isValidSupabaseUrl, restSelect, validateServiceKey } from '@/lib/runtime/canaries/supabase-rest';
 import { CANARY_TABLE } from '@/lib/runtime/canaries/types';
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -27,8 +27,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (!isValidSupabaseUrl(body.url)) {
     return NextResponse.json({ ok: false, error: 'url must be https://<ref>.supabase.co' }, { status: 400 });
   }
-  if (body.serviceKey.length < 100) {
-    return NextResponse.json({ ok: false, error: 'ye service key nahi lag rahi (anon key paste hui?)' }, { status: 400 });
+  const keyCheck = validateServiceKey(body.serviceKey);
+  if (!keyCheck.valid) {
+    return NextResponse.json({ ok: false, error: keyCheck.error }, { status: 400 });
   }
 
   // Live validation: service key se vault table (ya koi bhi) select — 401/403 = galat key
@@ -38,13 +39,18 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
   // 404 = table abhi nahi (setup pending) — connection phir bhi theek hai
 
-  await saveSupabaseConnection(
-    body.projectId,
-    body.url,
-    encryptValue(body.serviceKey),
-    body.anonKey ? encryptValue(body.anonKey) : null,
-  );
-  return NextResponse.json({ ok: true });
+  try {
+    await saveSupabaseConnection(
+      body.projectId,
+      body.url,
+      encryptValue(body.serviceKey),
+      body.anonKey ? encryptValue(body.anonKey) : null,
+    );
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('[POST /api/runtime/supabase] Encryption or DB save failed:', err);
+    return NextResponse.json({ ok: false, error: 'Failed to encrypt or save connection' }, { status: 500 });
+  }
 }
 
 export async function DELETE(req: Request): Promise<NextResponse> {

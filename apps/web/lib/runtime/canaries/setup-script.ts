@@ -64,8 +64,18 @@ create table if not exists public.${CANARY_LOG_TABLE} (
 alter table public.${CANARY_TABLE} enable row level security;
 alter table public.${CANARY_LOG_TABLE} enable row level security;
 
+-- PostgREST API permissions: service_role has full access, anon and authenticated can select (blocked by RLS)
+grant all on table public.${CANARY_TABLE} to service_role;
+grant all on table public.${CANARY_LOG_TABLE} to service_role;
+grant select on table public.${CANARY_TABLE} to anon, authenticated;
+
+-- security definer zaroori hai: ${CANARY_LOG_TABLE} par RLS ON hai (zero policies).
+-- Bina security definer ke, agar koi non-service-role caller (e.g. attacker) canary row update/delete karega,
+-- toh log table me insert RLS violation se fail ho jayega aur puri statement ERROR kar degi.
+-- security definer + set search_path = public se trigger table owner ke privileges se run hota hai,
+-- watch-only invariant maintain rehta hai aur attacker ko error dekar alert nahi karta.
 create or replace function public.${CANARY_TABLE}_guard()
-returns trigger language plpgsql as $$ begin
+returns trigger language plpgsql security definer set search_path = public as $$ begin
   insert into public.${CANARY_LOG_TABLE} (canary_marker, action, old_payload)
   values (old.marker, tg_op, to_jsonb(old));
   return null; -- AFTER trigger: watch-only, kabhi interfere nahi
@@ -78,7 +88,11 @@ for each row execute function public.${CANARY_TABLE}_guard();
 
 insert into public.${CANARY_TABLE} (marker, payload) values
  ${values}
-on conflict (marker) do nothing;`;
+on conflict (marker) do nothing;
+
+-- PostgREST schema cache reload trigger taaki naye tables turant REST API me reflect hon
+notify pgrst, 'reload config';
+notify pgrst, 'reload schema';`;
 
   return { seeds, sql };
 }

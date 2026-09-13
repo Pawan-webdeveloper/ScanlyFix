@@ -54,4 +54,9 @@ export const EVENTS = {
    * Consumed by child worker with jitter and per-project concurrency limit.
    */
   authProberRunProject: 'runtime/auth-prober.run-project',
+  /**
+   * Immediate alert event for a confirmed canary honeytoken hit.
+   * Consumed by worker to email owner with 1-hour rate limiting.
+   */
+  canaryHoneytokenHit: 'runtime/canary.honeytoken-hit',
 } as const
