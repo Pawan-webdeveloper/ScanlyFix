@@ -1437,6 +1437,7 @@ export const runtimeCanaryEvents = pgTable(
     /** 'trigger_log' | 'integrity' | 'rls_probe' | 'honeytoken' | 'verify' */
     source: text('source').notNull(),
     detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
   },
   (t) => [index('runtime_canary_events_project_idx').on(t.projectId, t.detectedAt)],
 );

@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 
-import { findCanaryByHoneytoken, getProjectOwnerEmail, getRuntimeProjectContext, insertCanaryEvents } from '@scanlyfix/db';
+import { findCanaryByHoneytoken, insertCanaryEvents } from '@scanlyfix/db';
 
-import { sendEmail } from '@/lib/email';
-import { buildCanaryAlertEmail } from '@/lib/runtime/canaries/alert';
+import { inngest, EVENTS } from '@/lib/inngest';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,37 +18,31 @@ async function handler(req: Request, ctx: { params: Promise<{ token: string }> }
   const canary = token ? await findCanaryByHoneytoken(token) : null;
 
   if (canary) {
-    const detection = {
-      kind: 'honeytoken_hit' as const,
-      source: 'honeytoken' as const,
-      canaryId: canary.id,
-      detail: `Honeytoken ${token.slice(0, 6)}… hit (${req.method}) — extracted data in use`,
-    };
+    const detail = `Honeytoken ${token.slice(0, 6)}… hit (${req.method}) — extracted data in use`;
 
-    // 1) DB me log karo
+    // 1) DB me log karo (every hit is evidence — always recorded)
     await insertCanaryEvents([{
       projectId: canary.projectId,
       canaryId: canary.id,
-      kind: detection.kind,
-      detail: detection.detail,
-      source: detection.source,
+      kind: 'honeytoken_hit',
+      detail,
+      source: 'honeytoken',
     }]);
 
-    // 2) Turant email — nightly wait nahi; honeytoken hit = critical, immediate action needed
+    // 2) Fire Inngest event for instant alert (email rate limited by worker)
     try {
-      const [ownerEmail, ctx2] = await Promise.all([
-        getProjectOwnerEmail(canary.projectId),
-        getRuntimeProjectContext(canary.projectId),
-      ]);
-      if (ownerEmail) {
-        const email = buildCanaryAlertEmail({
-          hostname: ctx2?.hostname ?? canary.projectId,
-          detections: [detection],
-        });
-        await sendEmail({ to: ownerEmail, ...email });
-      }
+      await inngest.send({
+        name: EVENTS.canaryHoneytokenHit,
+        data: {
+          projectId: canary.projectId,
+          canaryId: canary.id,
+          token,
+          method: req.method,
+          detail,
+        },
+      });
     } catch {
-      // Alert failure kabhi honeytoken response ko fail nahi karega
+      // Inngest send failure never errors the response
     }
   }
 

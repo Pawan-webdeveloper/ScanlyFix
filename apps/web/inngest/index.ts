@@ -20,6 +20,7 @@ import { runtimeAuthProber, runtimeAuthProberProject } from './functions/runtime
 import { runtimeSpendWatch } from './functions/runtime-spend-watch.ts'
 import { runtimePricingSync } from './functions/runtime-pricing-sync.ts'
 import { runtimeCanaryCheck } from './functions/runtime-canary-check.ts'
+import { runtimeCanaryHoneytokenAlert } from './functions/runtime-canary-honeytoken.ts'
 
 export const functions = [
   sweepMonitors,
@@ -37,4 +38,5 @@ export const functions = [
   runtimeSpendWatch,
   runtimePricingSync,
   runtimeCanaryCheck,
+  runtimeCanaryHoneytokenAlert,
 ]

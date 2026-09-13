@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { db } from '../client.ts';
 import { projects, runtimeCanaries, runtimeCanaryEvents } from '../schema.ts';
@@ -55,13 +55,18 @@ export async function getCanaryProjectConfig(
   // If no decrypt fn provided, return null safely (prevents bad cross-package import)
   if (!decryptFn) return null;
 
-  return {
-    projectId: raw.projectId,
-    supabaseUrl: raw.supabaseUrl,
-    serviceKey: decryptFn(raw.serviceKeyEnc),
-    anonKey: raw.anonKeyEnc ? decryptFn(raw.anonKeyEnc) : null,
-    snapshot: raw.snapshot,
-  };
+  try {
+    return {
+      projectId: raw.projectId,
+      supabaseUrl: raw.supabaseUrl,
+      serviceKey: decryptFn(raw.serviceKeyEnc),
+      anonKey: raw.anonKeyEnc ? decryptFn(raw.anonKeyEnc) : null,
+      snapshot: raw.snapshot,
+    };
+  } catch (err) {
+    console.error(`[getCanaryProjectConfig] Failed to decrypt credentials for project ${projectId}:`, err);
+    return null;
+  }
 }
 
 export async function saveSupabaseConnection(projectId: string, url: string, serviceKeyEnc: string, anonKeyEnc: string | null): Promise<void> {
@@ -92,8 +97,47 @@ export async function markCanariesSetup(projectId: string, snapshot: CanaryProje
     .where(and(eq(runtimeCanaries.projectId, projectId), eq(runtimeCanaries.status, 'pending_script')));
 }
 
-export async function listCanaries(projectId: string) {
-  return db.select().from(runtimeCanaries).where(eq(runtimeCanaries.projectId, projectId)).orderBy(runtimeCanaries.markerToken);
+export async function listCanaries(projectId: string, opts: { includeRetired?: boolean } = {}) {
+  if (opts.includeRetired) {
+    return db.select().from(runtimeCanaries).where(eq(runtimeCanaries.projectId, projectId)).orderBy(runtimeCanaries.markerToken);
+  }
+  return db
+    .select()
+    .from(runtimeCanaries)
+    .where(and(eq(runtimeCanaries.projectId, projectId), ne(runtimeCanaries.status, 'retired')))
+    .orderBy(runtimeCanaries.markerToken);
+}
+
+export async function retireCanaries(projectId: string): Promise<void> {
+  await db
+    .update(runtimeCanaries)
+    .set({ status: 'retired' })
+    .where(eq(runtimeCanaries.projectId, projectId));
+}
+
+export async function seedCanaries(
+  projectId: string,
+  seeds: Array<{ marker: string; honeytokenPath: string }>,
+): Promise<void> {
+  if (seeds.length === 0) return;
+  await db
+    .insert(runtimeCanaries)
+    .values(
+      seeds.map((s) => ({
+        projectId,
+        markerToken: s.marker,
+        honeytokenPath: s.honeytokenPath,
+        status: 'pending_script',
+      })),
+    )
+    .onConflictDoNothing();
+}
+
+export async function acknowledgeCanaryEvent(projectId: string, eventId: string): Promise<void> {
+  await db
+    .update(runtimeCanaryEvents)
+    .set({ acknowledgedAt: new Date() })
+    .where(and(eq(runtimeCanaryEvents.projectId, projectId), eq(runtimeCanaryEvents.id, eventId)));
 }
 
 export async function updateCanaryStatus(projectId: string, marker: string, status: string, integrity: string): Promise<void> {
@@ -128,6 +172,28 @@ export async function countCanaryEvents(projectId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+export async function hasRecentDuplicateEvent(
+  projectId: string,
+  kind: string,
+  detail: string,
+  withinHours = 24,
+): Promise<boolean> {
+  const cutoff = new Date(Date.now() - withinHours * 60 * 60 * 1000);
+  const [row] = await db
+    .select({ id: runtimeCanaryEvents.id })
+    .from(runtimeCanaryEvents)
+    .where(
+      and(
+        eq(runtimeCanaryEvents.projectId, projectId),
+        eq(runtimeCanaryEvents.kind, kind),
+        eq(runtimeCanaryEvents.detail, detail),
+        gte(runtimeCanaryEvents.detectedAt, cutoff),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
 export async function listCanaryEligibleProjectIds(): Promise<string[]> {
   const rows = await db
     .select({ id: projects.id })
@@ -144,4 +210,23 @@ export async function findCanaryByHoneytoken(token: string) {
     .where(and(eq(runtimeCanaries.honeytokenPath, token), eq(runtimeCanaries.status, 'planted')))
     .limit(1);
   return row ?? null;
+}
+
+/** Counts honeytoken_hit events for a specific canary within the cooldown window (in minutes). */
+export async function countRecentHoneytokenHits(
+  canaryId: string,
+  withinMinutes = 60,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000);
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(runtimeCanaryEvents)
+    .where(
+      and(
+        eq(runtimeCanaryEvents.canaryId, canaryId),
+        eq(runtimeCanaryEvents.kind, 'honeytoken_hit'),
+        gte(runtimeCanaryEvents.detectedAt, cutoff),
+      ),
+    );
+  return row?.n ?? 0;
 }

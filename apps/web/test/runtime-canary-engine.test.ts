@@ -5,6 +5,7 @@ const listCanariesMock = vi.fn();
 const updateCanaryStatusMock = vi.fn();
 const insertCanaryEventsMock = vi.fn();
 const markCanariesSetupMock = vi.fn();
+const hasRecentDuplicateEventMock = vi.fn();
 
 vi.mock('@scanlyfix/db', () => ({
   getCanaryProjectConfig: (...args: unknown[]) => getCanaryProjectConfigMock(...args),
@@ -12,6 +13,7 @@ vi.mock('@scanlyfix/db', () => ({
   updateCanaryStatus: (...args: unknown[]) => updateCanaryStatusMock(...args),
   insertCanaryEvents: (...args: unknown[]) => insertCanaryEventsMock(...args),
   markCanariesSetup: (...args: unknown[]) => markCanariesSetupMock(...args),
+  hasRecentDuplicateEvent: (...args: unknown[]) => hasRecentDuplicateEventMock(...args),
 }));
 
 vi.mock('@/lib/header-encryption', () => ({
@@ -45,6 +47,7 @@ describe('runCanaryCheck — credentials invalid & reachability handling (TASK 1
 
   beforeEach(() => {
     vi.clearAllMocks();
+    hasRecentDuplicateEventMock.mockResolvedValue(false);
     getCanaryProjectConfigMock.mockResolvedValue({
       projectId,
       supabaseUrl: 'https://test-ref.supabase.co',
@@ -178,5 +181,150 @@ describe('runCanaryCheck — credentials invalid & reachability handling (TASK 1
 
     expect(summary.reachable).toBe(true);
     expect(markCanariesSetupMock).toHaveBeenCalled();
+  });
+});
+
+describe('runCanaryCheck — nightly event dedupe (TASK 3)', () => {
+  const projectId = 'proj_dedupe_456';
+  const baselineHash = sha256Canonical({ note: 'original' });
+  const snapshot = {
+    payloadHashes: {
+      'CANARY::test::A': baselineHash,
+    },
+    logRowCount: 5,
+    takenAt: '2026-09-01T00:00:00.000Z',
+  };
+  const canaries = [{ id: 'canary_1', markerToken: 'CANARY::test::A', status: 'planted' }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getCanaryProjectConfigMock.mockResolvedValue({
+      projectId,
+      supabaseUrl: 'https://test-ref.supabase.co',
+      serviceKey: 'test_service_key',
+      anonKey: null,
+      snapshot,
+    });
+    listCanariesMock.mockResolvedValue(canaries);
+  });
+
+  it('same modified-row detection on two consecutive runs → 1 event row total, email hook called once', async () => {
+    const emailHook = vi.fn();
+
+    // Helper simulating runner (e.g. nightly Inngest job)
+    const runJob = async () => {
+      const summary = await runCanaryCheck(projectId);
+      if (summary.detections.length > 0) {
+        emailHook(summary.detections);
+      }
+      return summary;
+    };
+
+    const tamperedPayload = { note: 'ATTACKER_EDIT' };
+
+    // ─── RUN 1: First time detection ─────────────────────────────
+    // Mock REST response: modified row
+    restSelectMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      data: [{ marker: 'CANARY::test::A', payload: tamperedPayload }],
+      count: null,
+    });
+    restSelectMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      data: [{ id: 1 }],
+      count: 5,
+    });
+    // hasRecentDuplicateEvent returns false (never seen before)
+    hasRecentDuplicateEventMock.mockResolvedValueOnce(false);
+
+    const summary1 = await runJob();
+
+    // Run 1 checks:
+    expect(summary1.detections).toHaveLength(1);
+    expect(summary1.detections[0]?.kind).toBe('modified');
+    expect(insertCanaryEventsMock).toHaveBeenCalledTimes(1);
+    expect(emailHook).toHaveBeenCalledTimes(1);
+    expect(markCanariesSetupMock).not.toHaveBeenCalled(); // Tampered state must not become new baseline!
+
+    // ─── RUN 2: Consecutive run (within 24h) ──────────────────────
+    // Row is still modified in user's database
+    restSelectMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      data: [{ marker: 'CANARY::test::A', payload: tamperedPayload }],
+      count: null,
+    });
+    restSelectMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      data: [{ id: 1 }],
+      count: 5,
+    });
+    // hasRecentDuplicateEvent now returns true (duplicate within window)
+    hasRecentDuplicateEventMock.mockResolvedValueOnce(true);
+
+    const summary2 = await runJob();
+
+    // Run 2 checks:
+    expect(summary2.detections).toHaveLength(0); // Filtered out / suppressed!
+    // Total insertCanaryEventsMock calls across BOTH runs remains 1!
+    expect(insertCanaryEventsMock).toHaveBeenCalledTimes(1);
+    // Total emailHook calls across BOTH runs remains 1!
+    expect(emailHook).toHaveBeenCalledTimes(1);
+    expect(markCanariesSetupMock).not.toHaveBeenCalled();
+  });
+
+  it('partially duplicate batch: keeps new detections and filters duplicates', async () => {
+    restSelectMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      data: [
+        { marker: 'CANARY::test::A', payload: { note: 'modified_A' } },
+        { marker: 'CANARY::test::B', payload: { note: 'modified_B' } },
+      ],
+      count: null,
+    });
+    restSelectMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      data: [],
+      count: 5,
+    });
+
+    getCanaryProjectConfigMock.mockResolvedValueOnce({
+      projectId,
+      supabaseUrl: 'https://test-ref.supabase.co',
+      serviceKey: 'test_service_key',
+      anonKey: null,
+      snapshot: {
+        payloadHashes: {
+          'CANARY::test::A': 'old_hash_A',
+          'CANARY::test::B': 'old_hash_B',
+        },
+        logRowCount: 5,
+        takenAt: '2026-09-01T00:00:00.000Z',
+      },
+    });
+
+    listCanariesMock.mockResolvedValueOnce([
+      { id: 'c1', markerToken: 'CANARY::test::A', status: 'planted' },
+      { id: 'c2', markerToken: 'CANARY::test::B', status: 'planted' },
+    ]);
+
+    // A is duplicate (true), B is new (false)
+    hasRecentDuplicateEventMock.mockImplementation(async (_pid: string, _kind: string, detail: string) => {
+      return detail.includes('CANARY::test::A');
+    });
+
+    const summary = await runCanaryCheck(projectId);
+
+    // Only B should be in summary.detections and inserted
+    expect(summary.detections).toHaveLength(1);
+    expect(summary.detections[0]?.detail).toContain('CANARY::test::B');
+    expect(insertCanaryEventsMock).toHaveBeenCalledWith([
+      expect.objectContaining({ detail: expect.stringContaining('CANARY::test::B') }),
+    ]);
   });
 });
