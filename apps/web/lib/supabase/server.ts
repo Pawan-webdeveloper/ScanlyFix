@@ -22,6 +22,7 @@
 import 'server-only'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
+import { serverEnv } from '@/lib/env.ts'
 import { publicEnv } from '@/lib/public-env.ts'
 
 export async function createClient() {
@@ -35,7 +36,11 @@ export async function createClient() {
       setAll(cookiesToSet) {
         try {
           for (const { name, value, options } of cookiesToSet) {
-            cookieStore.set(name, value, options)
+            cookieStore.set(name, value, {
+              ...options,
+              sameSite: 'lax',
+              secure: serverEnv.isProduction,
+            })
           }
         } catch {
           // Called from a Server Component. The proxy refreshes the session on

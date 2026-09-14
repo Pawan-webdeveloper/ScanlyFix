@@ -34,9 +34,11 @@ export function requestOrigin(headers: Headers, fallback: string): string {
  * behaviour — a bare "configure" page — which is still better than a wrong
  * redirect to another deployment.
  */
-export function buildInstallUrl(slug: string, origin: string): string {
-  const base = `https://github.com/apps/${slug}/installations/new`
-  if (!origin) return base
+export function buildInstallUrl(slug: string, origin: string, state?: string | null): string {
+  const url = new URL(`https://github.com/apps/${slug}/installations/new`)
+  if (state) url.searchParams.set('state', state)
+  if (!origin) return url.toString()
   const callback = `${origin.replace(/\/+$/, '')}/api/github/callback?next=${encodeURIComponent('/feed')}`
-  return `${base}?redirect_url=${encodeURIComponent(callback)}`
+  url.searchParams.set('redirect_url', callback)
+  return url.toString()
 }

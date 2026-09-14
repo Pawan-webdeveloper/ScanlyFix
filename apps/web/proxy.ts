@@ -60,12 +60,15 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
         return request.cookies.getAll()
       },
       setAll(cookiesToSet) {
+        const secure =
+          request.nextUrl.protocol === 'https:' ||
+          request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() === 'https'
         for (const { name, value } of cookiesToSet) {
           request.cookies.set(name, value)
         }
         supabaseResponse = NextResponse.next({ request })
         for (const { name, value, options } of cookiesToSet) {
-          supabaseResponse.cookies.set(name, value, options)
+          supabaseResponse.cookies.set(name, value, { ...options, sameSite: 'lax', secure })
         }
       },
     },

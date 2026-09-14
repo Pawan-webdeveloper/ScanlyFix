@@ -27,6 +27,7 @@ import {
 } from '@scanlyfix/db'
 import { serverEnv } from '@/lib/env.ts'
 import { buildInstallUrl, requestOrigin } from '@/lib/github-connect.ts'
+import { signInstallState } from '@/lib/github-state.ts'
 import { PROVIDER_APPS, type ConnectionAppProvider, type ProviderApp } from '@/lib/connection-providers.ts'
 import { GitHubMark, SupabaseMark, GitLabMark, CloudflareMark } from './provider-marks.tsx'
 
@@ -239,6 +240,7 @@ export async function ConnectApps({ viewer }: { viewer: Viewer }) {
     ? buildInstallUrl(
         serverEnv.githubAppSlug,
         requestOrigin(await headers(), process.env['NEXT_PUBLIC_APP_URL'] ?? ''),
+        viewer.kind === 'user' ? signInstallState(serverEnv.githubStateSecret, viewer.userId) : null,
       )
     : null
 

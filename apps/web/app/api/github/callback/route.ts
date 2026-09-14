@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getViewer } from '@/lib/authz.ts'
+import { serverEnv } from '@/lib/env.ts'
+import { verifyInstallState } from '@/lib/github-state.ts'
 import { chooseConnectedRepo } from '@/lib/repo-cap.ts'
 import { getInstallationAccount, listInstallationRepos } from '@/lib/github-app.ts'
 import {
@@ -7,6 +9,7 @@ import {
   listReposForViewer,
   upsertInstallation,
   upsertRepo,
+  type Viewer,
 } from '@scanlyfix/db'
 
 export const runtime = 'nodejs'
@@ -38,14 +41,22 @@ export async function GET(request: Request) {
   const installationId = Number(installationIdRaw)
   if (!Number.isFinite(installationId)) return fail('invalid-installation', 400, url.origin, next)
 
+  const claimed = verifyInstallState(serverEnv.githubStateSecret, url.searchParams.get('state') ?? '')
   const viewer = await getViewer()
-  if (viewer.kind !== 'user') {
+
+  /*
+   * The signed state names the app user who clicked Install, without needing
+   * the session cookie to survive the cross-site redirect back from github.com.
+   * The session remains the fallback for links that carry no state.
+   */
+  const persistViewer: Viewer = claimed ? { kind: 'user', userId: claimed.userId } : viewer
+
+  if (persistViewer.kind !== 'user') {
     /*
-     * The install is not lost with the session. The same route runs again
-     * after sign-in — it is idempotent — so `next` carries the installation
-     * id straight through /login and the connect completes without the user
-     * finding the button twice. A same-origin path with a query, exactly the
-     * shape safeNextPath exists to allow.
+     * No signed state and no session. The install is not lost: the same route
+     * runs again after sign-in — it is idempotent — so `next` carries the
+     * installation id straight through /login. A same-origin path with a query,
+     * exactly the shape safeNextPath exists to allow.
      */
     const resume = new URL('/api/github/callback', url.origin)
     resume.searchParams.set('installation_id', String(installationId))
@@ -58,7 +69,7 @@ export async function GET(request: Request) {
 
   try {
     const account = await getInstallationAccount(installationId)
-    const installation = await upsertInstallation(viewer, {
+    const installation = await upsertInstallation(persistViewer, {
       installationId,
       accountLogin: account.login,
       accountType: account.type,
@@ -74,7 +85,7 @@ export async function GET(request: Request) {
      * account's installations. Kept a no-op when the grant carries no repos —
      * an install that selected nothing must not prune anything.
      */
-    const existing = await listReposForViewer(viewer)
+    const existing = await listReposForViewer(persistViewer)
     // Map GitHub's `id` onto the cap's `githubId` match key; the spread keeps
     // every other InstallationRepo field the upsert below needs.
     const granted = repos.map((repo) => ({ ...repo, githubId: repo.id }))
@@ -90,7 +101,20 @@ export async function GET(request: Request) {
         private: chosen.repo.private,
         githubId: chosen.repo.id,
       }))
-      if (row) await deleteOtherReposForUser(viewer, row.id)
+      if (row) await deleteOtherReposForUser(persistViewer, row.id)
+    }
+
+    /*
+     * The installation is already saved. Only now does the browser session
+     * matter: if it is not signed in as the owner, send them through login and
+     * they will land on a feed that already has data.
+     */
+    const sessionMatchesOwner =
+      viewer.kind === 'user' && (!claimed || viewer.userId === claimed.userId)
+    if (!sessionMatchesOwner) {
+      const login = new URL('/login', url.origin)
+      login.searchParams.set('next', '/feed')
+      return NextResponse.redirect(login)
     }
 
     const destination = new URL('/feed#repositories', url.origin)
