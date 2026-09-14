@@ -83,9 +83,10 @@ describe('packages/db runtime-guard queries', () => {
     );
   });
 
-  it('seedDemoGuardRoutes inserts routes with source=sample', async () => {
+  it('seedDemoGuardRoutes bulk-inserts every demo route with source=sample', async () => {
     mockReturning.mockResolvedValue([
-      { id: 'route-demo-1' },
+      { id: 'route-demo-1', pattern: '/dashboard', method: 'GET' },
+      { id: 'route-demo-2', pattern: '/admin/users', method: 'GET' },
     ]);
     mockOnConflictDoUpdate.mockReturnValue({
       returning: mockReturning,
@@ -93,13 +94,28 @@ describe('packages/db runtime-guard queries', () => {
 
     await seedDemoGuardRoutes('proj-123');
 
-    // Check first insert into runtimeRoutes
-    expect(mockValues).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: 'proj-123',
-        source: 'sample',
-      }),
-    );
+    // One bulk INSERT for the routes, one for the stats — never a per-row loop.
+    const routeInsert = mockValues.mock.calls[0]?.[0] as Array<Record<string, unknown>>;
+    expect(Array.isArray(routeInsert)).toBe(true);
+    expect(routeInsert.length).toBeGreaterThan(5);
+    expect(routeInsert.every((r) => r.projectId === 'proj-123' && r.source === 'sample')).toBe(true);
+
+    // The demo must cover every verdict the dashboard can render.
+    const patterns = routeInsert.map((r) => r.pattern);
+    expect(patterns).toContain('/admin/users'); // inconsistent enforcement
+    expect(patterns).toContain('/api/scans'); // server action the prober cannot test
+    expect(patterns).toContain('/pricing'); // genuinely public
+    expect(routeInsert.some((r) => r.kind === 'server_action')).toBe(true);
+
+    // Stats carry the middleware-outcome breakdown so both axes are demonstrated.
+    const statInsert = mockValues.mock.calls[1]?.[0] as Array<Record<string, number>>;
+    expect(Array.isArray(statInsert)).toBe(true);
+    expect(statInsert.some((s) => s.withoutSessionBlocked > 0)).toBe(true);
+    expect(statInsert.some((s) => s.withoutSessionPassed > 0)).toBe(true);
+    // Every blocked+passed pair stays within the logged-out total it is a subset of.
+    expect(
+      statInsert.every((s) => s.withoutSessionBlocked + s.withoutSessionPassed <= s.withoutSession),
+    ).toBe(true);
   });
 
   it('clearGuardRoutes deletes runtime_routes and guard-sourced prober targets in a single transaction', async () => {

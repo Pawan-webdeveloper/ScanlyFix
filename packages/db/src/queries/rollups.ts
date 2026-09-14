@@ -259,6 +259,127 @@ export async function getResponseTimesFromDailyRollups(
  * @param end - End of time range
  * @returns Uptime statistics with latency from rollups
  */
+
+/* -------------------------------------------------------------------------- */
+/* Rollups plus the part that has not been rolled up yet                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Raw-event totals for the tail of a window.
+ *
+ * Rollups are written by a cron, so there is always a stretch of recent time
+ * they do not cover yet. Reading only the rollup tables — which is what these
+ * functions used to do — meant the numbers on the page lagged that cron:
+ *
+ *   - The daily rollup runs ONCE a day, at 05:05 (rollup-worker.ts:47). So the
+ *     7-day and 30-day uptime figures contained nothing that happened today. A
+ *     site that went down at 09:00 still showed the percentage it had
+ *     yesterday, all day, on the page the customer opened BECAUSE it went down.
+ *   - A monitor enabled this morning had no daily rollup at all, so `total` was
+ *     0, `uptimePercent` was null, and the page showed a dash for a day. The
+ *     customer's first experience of the feature was a number that never arrived.
+ *   - The hourly rollup runs at :05 past the hour, so the 24-hour figure was
+ *     missing up to an hour of the most recent — and most relevant — data.
+ *
+ * The fix is to read the raw events for whatever the rollups do not cover.
+ * Events are retained for 90 days, which is the whole window any of these
+ * periods ask for, so nothing is lost and nothing is estimated.
+ */
+async function rawTotals(
+  monitorId: string,
+  start: Date,
+  end: Date,
+): Promise<{ total: number; up: number; avgLatencyMs: number | null; maxLatencyMs: number | null }> {
+  if (start >= end) return { total: 0, up: 0, avgLatencyMs: null, maxLatencyMs: null }
+
+  const [row] = await db
+    .select({
+      total: sql<number>`COUNT(*)::int`,
+      up: sql<number>`COUNT(*) FILTER (WHERE ${monitorEvents.ok})::int`,
+      avgLatencyMs: sql<number | null>`ROUND(AVG(${monitorEvents.latencyMs}))`,
+      maxLatencyMs: sql<number | null>`MAX(${monitorEvents.latencyMs})`,
+    })
+    .from(monitorEvents)
+    .where(
+      and(
+        eq(monitorEvents.monitorId, monitorId),
+        gte(monitorEvents.ts, start),
+        lte(monitorEvents.ts, end),
+      ),
+    )
+
+  return {
+    total: row?.total ?? 0,
+    up: row?.up ?? 0,
+    avgLatencyMs: row?.avgLatencyMs ?? null,
+    maxLatencyMs: row?.maxLatencyMs ?? null,
+  }
+}
+
+/**
+ * Combines a rollup total with a raw-event total.
+ *
+ * The averages are weighted by check count rather than averaged, because
+ * averaging two averages over different sample sizes is simply the wrong
+ * number. p95 cannot be recovered from a rollup plus raw rows, so the larger of
+ * the two is reported — an over-estimate is the safe direction for a latency
+ * figure someone is using to decide whether their site feels slow.
+ */
+export function combine(
+  rollup: { total: number; up: number; avgLatencyMs: number | null; p95LatencyMs: number | null },
+  raw: { total: number; up: number; avgLatencyMs: number | null; maxLatencyMs: number | null },
+): UptimeResultWithLatency {
+  const total = rollup.total + raw.total
+  const up = rollup.up + raw.up
+
+  const weighted =
+    total === 0
+      ? null
+      : Math.round(
+          ((rollup.avgLatencyMs ?? 0) * rollup.total + (raw.avgLatencyMs ?? 0) * raw.total) / total,
+        )
+
+  const p95Candidates = [rollup.p95LatencyMs, raw.maxLatencyMs].filter(
+    (v): v is number => typeof v === 'number',
+  )
+
+  return {
+    total,
+    up,
+    down: total - up,
+    uptimePercent: total === 0 ? null : Math.round((up / total) * 10_000) / 100,
+    avgLatencyMs: total === 0 ? null : weighted,
+    p95LatencyMs: p95Candidates.length > 0 ? Math.max(...p95Candidates) : null,
+  }
+}
+
+/**
+ * Where the raw tail begins.
+ *
+ * Exported for tests: the boundary is the whole correctness argument. One
+ * bucket too early double-counts every check in it, one too late drops them.
+ */
+export function tailStartAfter(covered: Date | null, bucketMs: number, windowStart: Date): Date {
+  if (!covered) return windowStart
+  const next = new Date(covered.getTime() + bucketMs)
+  return next > windowStart ? next : windowStart
+}
+
+/** Newest rollup boundary already covered, so the raw tail starts after it. */
+async function lastCoveredAt(
+  table: typeof monitorHourlyRollups | typeof monitorDailyRollups,
+  column: typeof monitorHourlyRollups.hour | typeof monitorDailyRollups.day,
+  monitorId: string,
+  start: Date,
+  end: Date,
+): Promise<Date | null> {
+  const [row] = await db
+    .select({ at: sql<Date | null>`MAX(${column})` })
+    .from(table)
+    .where(and(eq(table.monitorId, monitorId), gte(column, start), lte(column, end)))
+  return row?.at ? new Date(row.at) : null
+}
+
 export async function getUptimeFromHourlyRollups(
   monitorId: string,
   start: Date,
@@ -280,19 +401,22 @@ export async function getUptimeFromHourlyRollups(
       ),
     )
 
-  const total = result?.total ?? 0
-  const up = result?.up ?? 0
-  const down = total - up
-  const uptimePercent = total === 0 ? null : Math.round((up / total) * 10_000) / 100
+  // The hourly cron runs at :05, so the newest complete hour is the newest
+  // rollup row. Everything after it is read from the raw events — the boundary
+  // comes from the data rather than the clock, so a late or skipped cron run
+  // widens the raw window instead of losing the checks inside it.
+  const covered = await lastCoveredAt(monitorHourlyRollups, monitorHourlyRollups.hour, monitorId, start, end)
+  const raw = await rawTotals(monitorId, tailStartAfter(covered, 3_600_000, start), end)
 
-  return {
-    total,
-    up,
-    down,
-    uptimePercent,
-    avgLatencyMs: result?.avgLatencyMs ?? null,
-    p95LatencyMs: result?.p95LatencyMs ?? null,
-  }
+  return combine(
+    {
+      total: result?.total ?? 0,
+      up: result?.up ?? 0,
+      avgLatencyMs: result?.avgLatencyMs ?? null,
+      p95LatencyMs: result?.p95LatencyMs ?? null,
+    },
+    raw,
+  )
 }
 
 /**
@@ -324,19 +448,21 @@ export async function getUptimeFromDailyRollups(
       ),
     )
 
-  const total = result?.total ?? 0
-  const up = result?.up ?? 0
-  const down = total - up
-  const uptimePercent = total === 0 ? null : Math.round((up / total) * 10_000) / 100
+  // The daily cron runs once, at 05:05, so today is never in these rows and
+  // often yesterday is not either. Read whatever they do not cover from the raw
+  // events rather than reporting a percentage that stops at the last cron run.
+  const covered = await lastCoveredAt(monitorDailyRollups, monitorDailyRollups.day, monitorId, start, end)
+  const raw = await rawTotals(monitorId, tailStartAfter(covered, 86_400_000, start), end)
 
-  return {
-    total,
-    up,
-    down,
-    uptimePercent,
-    avgLatencyMs: result?.avgLatencyMs ?? null,
-    p95LatencyMs: result?.p95LatencyMs ?? null,
-  }
+  return combine(
+    {
+      total: result?.total ?? 0,
+      up: result?.up ?? 0,
+      avgLatencyMs: result?.avgLatencyMs ?? null,
+      p95LatencyMs: result?.p95LatencyMs ?? null,
+    },
+    raw,
+  )
 }
 
 /**

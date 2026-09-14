@@ -288,11 +288,17 @@ export const projects = pgTable(
     supabaseUrl: text('supabase_url'),
     supabaseServiceKeyEnc: text('supabase_service_key_enc'),
     supabaseAnonKeyEnc: text('supabase_anon_key_enc'),
-    /** Snapshot of canary row hashes + trigger log count at last verified state. */
     canariesSetupAt: timestamp('canaries_setup_at', { withTimezone: true }),
+    /**
+     * Tamper-evidence baseline: a hash per decoy row, the trigger-log row count,
+     * and the highest trigger-log id already reported. Rows above that id are
+     * evidence nobody has been told about yet.
+     */
     canarySnapshot: jsonb('canary_snapshot').$type<{
       payloadHashes: Record<string, string>;
       logRowCount: number;
+      /** Absent on snapshots written before the trigger log was read. */
+      lastLogId?: number;
       takenAt: string;
     }>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1269,6 +1275,10 @@ export const runtimeProberTargets = pgTable(
     baselineAt: timestamp('baseline_at', { withTimezone: true }),
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
     lastActualStatus: integer('last_actual_status'),
+    /** Last verdict: 'protected' | 'open' | 'inconclusive' | 'exposed' | 'baseline_recorded' */
+    lastVerdict: text('last_verdict'),
+    /** Plain-language reason for the last verdict (soft-404, SPA shell, login form …) */
+    lastReason: text('last_reason'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('runtime_prober_targets_uq').on(t.projectId, t.path, t.method)],
@@ -1290,10 +1300,17 @@ export const runtimeProberFindings = pgTable(
     actualStatus: integer('actual_status').notNull(),
     /** 'critical' = sensitive path (/admin, /api/*) · 'high' = baaki */
     severity: text('severity').notNull().default('high'),
-    /** 'anon_role' = opens with public Supabase anon key · null = bare logged-out bypass */
+    /** 'anon_role' = opens with public Supabase anon key · 'exposed' = open on first probe ·
+     *  'sequential_id' = IDOR via neighbouring ids · null = bare logged-out regression */
     variant: text('variant'),
     /** First 16 hex chars of key SHA-256 for display */
     keyFingerprint: text('key_fingerprint'),
+    /** 'admin' | 'api' | 'debug' | 'auth_page' — derived from the path at detection time */
+    category: text('category'),
+    /** Why it was judged open (body kind, plain language) */
+    reason: text('reason'),
+    /** Response evidence: content-type, size, sample, title — never the whole body */
+    evidence: jsonb('evidence').$type<Record<string, unknown>>(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1327,6 +1344,10 @@ export const runtimeRouteStats = pgTable(
     hour: timestamp('hour', { withTimezone: true }).notNull(),
     withSession: integer('with_session').notNull().default(0),
     withoutSession: integer('without_session').notNull().default(0),
+    /** Of the logged-out requests, how many the wrapped middleware turned away (401/403/login redirect). */
+    withoutSessionBlocked: integer('without_session_blocked').notNull().default(0),
+    /** Of the logged-out requests, how many the wrapped middleware waved through. */
+    withoutSessionPassed: integer('without_session_passed').notNull().default(0),
   },
   (t) => [uniqueIndex('runtime_route_stats_uq').on(t.routeId, t.hour)],
 );
@@ -1356,6 +1377,13 @@ export const runtimeAiCalls = pgTable(
     userHash: text('user_hash'),
     /** Source of the telemetry event: 'sample' for simulated test events, null for live SDK calls. */
     source: text('source'),
+    /**
+     * 'error' when the call failed. NULL means success — older SDK builds only
+     * ever reported successes, so an absent value must not read as a failure.
+     */
+    status: text('status'),
+    /** Closed-set failure label ('rate_limit', 'auth', 'ceiling', …). Never the provider's message. */
+    errorKind: text('error_kind'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('runtime_ai_calls_project_created_idx').on(t.projectId, t.createdAt)],
@@ -1421,7 +1449,15 @@ export const runtimeCanaries = pgTable(
     lastIntegrity: text('last_integrity'), // 'ok' | 'modified' | 'missing' | 'unreachable'
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('runtime_canaries_marker_uq').on(t.projectId, t.markerToken)],
+  (t) => [
+    uniqueIndex('runtime_canaries_marker_uq').on(t.projectId, t.markerToken),
+    /**
+     * The honeytoken endpoint is unauthenticated by design and looks a canary up
+     * by this column on every request. Without the index that lookup is a
+     * sequential scan an anonymous caller can trigger at will.
+     */
+    uniqueIndex('runtime_canaries_honeytoken_uq').on(t.honeytokenPath),
+  ],
 );
 
 export const runtimeCanaryEvents = pgTable(
@@ -1439,7 +1475,15 @@ export const runtimeCanaryEvents = pgTable(
     detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
     acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
   },
-  (t) => [index('runtime_canary_events_project_idx').on(t.projectId, t.detectedAt)],
+  (t) => [
+    index('runtime_canary_events_project_idx').on(t.projectId, t.detectedAt),
+    /**
+     * The honeytoken rate limiter counts recent hits for ONE canary. Served by
+     * the project index, that query constrains only detected_at and scans every
+     * project's events for the window — on a table an anonymous caller can grow.
+     */
+    index('runtime_canary_events_canary_idx').on(t.canaryId, t.detectedAt),
+  ],
 );
 
 
@@ -1724,3 +1768,67 @@ export type RuntimeModelPricing = typeof runtimeModelPricing.$inferSelect
 export type NewRuntimeModelPricing = typeof runtimeModelPricing.$inferInsert
 
  
+/**
+ * Attack attempts against a customer's live site, as observed by the SDK.
+ *
+ * One row per (request, attack class). A single payload commonly trips several
+ * rules and the SDK collapses those before sending, so the feed reads as a list
+ * of things that happened rather than a list of patterns that matched.
+ *
+ * WHAT IS DELIBERATELY NOT HERE: no request body, no cookie, no authorization
+ * header, no concrete URL. `pattern` is the route SHAPE the guard normaliser
+ * produces, and `evidence` is a truncated window around the payload with
+ * anything credential-shaped removed. A security product that hoovers up its
+ * customers' traffic to look for attacks has become the attack.
+ *
+ * `sourceIp` IS stored in full, which is the one deliberate exception. It is the
+ * attacker's address rather than a visitor's, and an operator who cannot read it
+ * cannot block it — an alert you can do nothing about is just an interruption.
+ */
+export const runtimeThreatEvents = pgTable(
+  'runtime_threat_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    /** Closed set — see ThreatKind in the runtime SDK. Validated at ingest. */
+    kind: text('kind').notNull(),
+    /** 'critical' | 'high' | 'medium'. Derived from kind, stored so queries can sort. */
+    severity: text('severity').notNull(),
+    /** 'certain' | 'likely'. Nothing below `likely` is ever recorded. */
+    confidence: text('confidence').notNull(),
+    /** Which rule fired. Ours, for support and for pruning noisy patterns. */
+    ruleId: text('rule_id').notNull().default(''),
+    /** Where in the request the payload sat: 'path' | 'query' | 'header' | 'user_agent'. */
+    surface: text('surface').notNull(),
+    method: text('method').notNull(),
+    /** Route SHAPE — `/api/users/[id]`, never `/api/users/42`. */
+    pattern: text('pattern').notNull(),
+    /** Truncated, redacted window around the payload. */
+    evidence: text('evidence').notNull().default(''),
+    sourceIp: text('source_ip'),
+    userAgent: text('user_agent'),
+    /** Whether the customer's own middleware turned the request away. */
+    blocked: boolean('blocked').notNull().default(false),
+    responseStatus: integer('response_status'),
+    /** 'sdk' for live traffic, 'sample' for the simulated events the console can generate. */
+    source: text('source').notNull().default('sdk'),
+    /**
+     * Occurrences this row stands for. One, except where the SDK's per-source
+     * throttle folded a burst of sign-in attempts into a single event.
+     */
+    eventCount: integer('event_count').notNull().default(1),
+    detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /** The feed: newest first for one project. */
+    index('runtime_threat_events_project_idx').on(t.projectId, t.detectedAt),
+    /**
+     * The brute-force rollup groups by source inside a time window. Without this
+     * it is a scan of every threat the project ever recorded, on a table an
+     * anonymous attacker chooses the size of.
+     */
+    index('runtime_threat_events_source_idx').on(t.projectId, t.sourceIp, t.detectedAt),
+    /** "Show me only the critical ones", which is the first thing anyone clicks. */
+    index('runtime_threat_events_kind_idx').on(t.projectId, t.kind, t.detectedAt),
+  ],
+)

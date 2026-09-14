@@ -62,7 +62,7 @@ export function StatusHero({
 
   return (
     <section
-      className="rounded-lg border border-gray-200 bg-white p-6 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+      className="rounded-lg border border-c-line bg-c-card p-6 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
       aria-label={`Status: ${label}`}
     >
       <div className="flex items-start gap-3">
@@ -83,7 +83,7 @@ export function StatusHero({
           >
             {label}
           </h2>
-          <p className="mt-2 text-sm text-gray-600">{sub}</p>
+          <p className="mt-2 text-sm text-c-muted">{sub}</p>
         </div>
       </div>
     </section>

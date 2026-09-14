@@ -88,16 +88,16 @@ export function MonitorSettingsSection({
 
   return (
     <section
-      className="rounded-lg border border-gray-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+      className="rounded-lg border border-c-line bg-c-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
       aria-label="Monitor settings"
     >
-      <header className="border-b border-gray-100 px-5 py-4">
-        <h2 className="text-[15px] font-semibold text-gray-900">Monitor</h2>
+      <header className="border-b border-c-line px-5 py-4">
+        <h2 className="text-[15px] font-semibold text-c-ink">Monitor</h2>
       </header>
 
       <ul>
         <Row label="Checks">
-          <span className="text-sm text-gray-700">{formatInterval(intervalS)}</span>
+          <span className="text-sm text-c-ink">{formatInterval(intervalS)}</span>
         </Row>
 
         <Row label="Email me after">
@@ -117,14 +117,14 @@ export function MonitorSettingsSection({
               placeholder="you@company.com"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="w-56 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="w-56 rounded-md border border-c-line bg-c-card px-3 py-1.5 text-sm text-c-ink placeholder:text-c-muted/70 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               aria-invalid={email.length > 0 && !isValidEmail}
             />
             <button
               type="button"
               onClick={save}
               disabled={!canSave}
-              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md border border-c-line bg-c-card px-3 py-1.5 text-sm font-medium text-c-ink transition-colors hover:bg-c-soft disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isSaving ? 'Saving…' : 'Save'}
             </button>
@@ -132,7 +132,7 @@ export function MonitorSettingsSection({
         </Row>
       </ul>
 
-      <footer className="border-t border-gray-100 px-5 py-3 text-xs text-gray-500">
+      <footer className="border-t border-c-line px-5 py-3 text-xs text-c-muted">
         {error ? (
           <span className="text-red-600">{error}</span>
         ) : savedAt && Date.now() - savedAt < 4000 ? (
@@ -157,10 +157,10 @@ function Row({
   return (
     <li
       className={`flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 ${
-        last ? '' : 'border-b border-gray-100'
+        last ? '' : 'border-b border-c-line'
       }`}
     >
-      <span className="text-sm font-medium text-gray-700">{label}</span>
+      <span className="text-sm font-medium text-c-ink">{label}</span>
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </li>
   )
@@ -179,7 +179,7 @@ function SegmentedGroup({
     <div
       role="radiogroup"
       aria-label="Email me after N failed checks"
-      className="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 p-0.5"
+      className="inline-flex items-center rounded-md border border-c-line bg-c-soft p-0.5"
     >
       {options.map((option) => {
         const active = option === value
@@ -200,8 +200,8 @@ function SegmentedGroup({
             onClick={() => onChange(option)}
             className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
               active
-                ? 'border border-blue-200 bg-white text-blue-700 shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'border border-blue-200 bg-c-card text-blue-700 shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
+                : 'text-c-muted hover:text-c-ink'
             }`}
           >
             {label}

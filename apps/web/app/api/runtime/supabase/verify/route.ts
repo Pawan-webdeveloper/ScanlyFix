@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getCanaryProjectConfig, listCanaries, markCanariesSetup } from '@scanlyfix/db';
 
 import { getViewer } from '@/lib/authz';
+import { hasRuntimeAccess } from '@/lib/entitlements';
 import { getProject } from '@scanlyfix/db';
 import { decryptValue } from '@/lib/header-encryption';
 import { sha256Canonical } from '@/lib/runtime/canaries/integrity';
@@ -20,14 +21,17 @@ export async function POST(req: Request): Promise<NextResponse> {
   const project = await getProject(projectId, viewer);
   if (!project) return NextResponse.json({ ok: false, error: 'Project not found' }, { status: 404 });
 
+  // Enforced here as well as on the page: a server route that reads a customer's
+  // database must not rely on the UI having gated it.
+  if (!(await hasRuntimeAccess(viewer, projectId))) {
+    return NextResponse.json({ ok: false, error: 'Canaries are a Pro feature.' }, { status: 403 });
+  }
+
   const cfg = await getCanaryProjectConfig(projectId, decryptValue);
   if (!cfg) return NextResponse.json({ ok: false, error: 'Please connect your Supabase database first in Step 1.' }, { status: 400 });
 
   const rest = { url: cfg.supabaseUrl, serviceKey: cfg.serviceKey };
-  console.log(`[POST /api/runtime/supabase/verify] Verifying Supabase connection for project ${projectId} at ${cfg.supabaseUrl}...`);
-
   const rows = await restSelect<{ marker: string; payload: unknown }>(rest, CANARY_TABLE, { query: 'select=marker,payload' });
-  console.log(`[POST /api/runtime/supabase/verify] CANARY_TABLE query response: status=${rows.status}, ok=${rows.ok}, error=${rows.error || 'none'}, rowsCount=${rows.data?.length ?? 'null'}`);
 
   // 1) Missing Table / PostgREST schema cache miss
   const isMissingTable =
@@ -76,18 +80,20 @@ export async function POST(req: Request): Promise<NextResponse> {
     return NextResponse.json(
       {
         ok: false,
-        error: `Unable to connect to Supabase at ${cfg.supabaseUrl} (${rows.error || 'Connection failed'}). Check the project URL.`,
+        error: `Supabase at ${cfg.supabaseUrl} did not answer. Check that the project URL is right and that the project is not paused.`,
       },
       { status: 502 },
     );
   }
 
-  // 5) Generic REST failure
+  // 5) Generic REST failure. `restSelect` has already logged the driver's own
+  // message, which can carry table names and connection details; what goes back
+  // to the browser is only the status and what to do about it.
   if (!rows.ok || !rows.data) {
     return NextResponse.json(
       {
         ok: false,
-        error: `Supabase REST API returned error (${rows.status}): ${rows.error || 'Unknown error'}`,
+        error: `Supabase answered with HTTP ${rows.status}. Wait a moment and click Verify again; if it keeps failing, re-check the project URL and service role key.`,
       },
       { status: 502 },
     );
@@ -95,6 +101,18 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // 6) Match canaries
   const canaries = await listCanaries(projectId);
+  if (canaries.length === 0) {
+    // An empty list used to pass: nothing was missing because nothing was
+    // expected, so verification reported success on a project with no decoys
+    // registered at all.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'No decoys are registered for this project. Generate the setup script first, run it, then verify.',
+      },
+      { status: 400 },
+    );
+  }
   const found = new Set(rows.data.map((r) => r.marker));
   const missing = canaries.filter((c) => !found.has(c.markerToken));
   if (missing.length > 0) {
@@ -107,19 +125,27 @@ export async function POST(req: Request): Promise<NextResponse> {
     );
   }
 
-  // 7) Query log table
-  const log = await restSelect<{ id: number }>(rest, CANARY_LOG_TABLE, { query: 'select=id', withCount: true });
-  console.log(`[POST /api/runtime/supabase/verify] CANARY_LOG_TABLE count: ${log.count ?? 0}`);
+  // 7) Read the trigger log: its size, and the id everything up to now sits at.
+  const [log, newestLog] = await Promise.all([
+    restSelect<{ id: number }>(rest, CANARY_LOG_TABLE, { query: 'select=id', withCount: true }),
+    restSelect<{ id: number }>(rest, CANARY_LOG_TABLE, { query: 'select=id&order=id.desc', limit: 1 }),
+  ]);
 
-  // 8) Baseline snapshot mirror
+  // 8) Baseline snapshot
   const payloadHashes: Record<string, string> = {};
   for (const r of rows.data) {
     payloadHashes[r.marker] = sha256Canonical(r.payload);
   }
 
+  // The watermark starts at whatever the log already holds. Without it, the
+  // first nightly check after setup would report every pre-existing log row as
+  // a fresh intrusion.
+  const lastLogId = newestLog.data?.[0]?.id ?? 0;
+
   await markCanariesSetup(projectId, {
     payloadHashes,
     logRowCount: log.count ?? 0,
+    lastLogId,
     takenAt: new Date().toISOString(),
   });
 

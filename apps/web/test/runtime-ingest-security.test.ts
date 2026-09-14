@@ -312,8 +312,52 @@ describe('Runtime Ingest Route Security Audit & Hardening', () => {
 
     // Only the single valid event should have been forwarded to recordRouteEvents
     expect(recordRouteEvents).toHaveBeenCalledWith('proj-alpha', [
-      { pattern: '/valid/route', method: 'POST', kind: undefined, hasSession: true },
+      { pattern: '/valid/route', method: 'POST', kind: undefined, hasSession: true, outcome: 'unknown' },
     ]);
+  });
+
+  // ── TEST (j2): Route outcome is attacker-controlled input ───────────────────
+  it('accepts only the three known route outcomes and coerces anything else to unknown', async () => {
+    const { recordRouteEvents } = await import('@scanlyfix/db');
+
+    const payload = JSON.stringify({
+      events: [
+        { pattern: '/a', method: 'GET', hasSession: false, outcome: 'blocked' },
+        { pattern: '/b', method: 'GET', hasSession: false, outcome: 'passed' },
+        { pattern: '/c', method: 'GET', hasSession: false, outcome: 'unknown' },
+        { pattern: '/d', method: 'GET', hasSession: false, outcome: 'BLOCKED' }, // wrong case
+        { pattern: '/e', method: 'GET', hasSession: false, outcome: 'enforced' }, // not a member
+        { pattern: '/f', method: 'GET', hasSession: false, outcome: { $ne: null } }, // object injection
+        { pattern: '/g', method: 'GET', hasSession: false }, // absent
+      ],
+    });
+
+    const req = new Request('http://localhost:3000/api/runtime/ingest', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-runtime-project-id': 'proj-alpha',
+        'x-runtime-signature': ALPHA_SECRET,
+      },
+      body: payload,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const recorded = (recordRouteEvents as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(-1)?.[1] as Array<{
+      pattern: string;
+      outcome: string;
+    }>;
+    const byPattern = Object.fromEntries(recorded.map((e) => [e.pattern, e.outcome]));
+
+    expect(byPattern['/a']).toBe('blocked');
+    expect(byPattern['/b']).toBe('passed');
+    // Everything unrecognised falls back to 'unknown' — never to a value that
+    // would fabricate evidence about how the route is guarded.
+    for (const p of ['/c', '/d', '/e', '/f', '/g']) {
+      expect(byPattern[p], p).toBe('unknown');
+    }
   });
 
   // ── TEST (k): AI telemetry safe integer bounds ──────────────────────────────
@@ -427,12 +471,14 @@ describe('Runtime Ingest Route - Guard Route Events Security Matrix', () => {
         method: 'GET',
         kind: 'route',
         hasSession: true,
+        outcome: 'unknown',
       },
       {
         pattern: '/api/projects/[id]/settings',
         method: 'POST',
         kind: 'server_action',
         hasSession: true,
+        outcome: 'unknown',
       },
     ]);
   });

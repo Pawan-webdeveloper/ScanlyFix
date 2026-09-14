@@ -1,14 +1,14 @@
 import { ThemeToggle } from './theme-toggle.tsx'
 
 /**
- * The uptime page's top bar — a quiet white strip with a back chevron,
- * the workspace breadcrumb, and an icon cluster on the right.
+ * The uptime detail page's top bar — a breadcrumb rather than a page title,
+ * because this page is always reached from somewhere.
  *
- * Lives in the (app) layout but only the uptime route renders it directly:
- * every other signed-in page keeps the old sticky console header. The new
- * uptime layout sits on a white canvas, so the header is white too — no
- * hairline border below, no backdrop blur, no scroll-driven opacity. A bar
- * that disappears on scroll on a 90-day timeline page reads as a bug.
+ * Every other signed-in page uses PageHeader; this one needs the trail back to
+ * the project. It is otherwise the console's own surface — c-card on c-line,
+ * the same tokens as the sidebar — so it follows the theme. It deliberately
+ * does not fade or blur on scroll: a bar that disappears while you are reading
+ * a 90-day timeline reads as a bug.
  */
 export function UptimeHeader({
   breadcrumb,
@@ -18,10 +18,10 @@ export function UptimeHeader({
   actions?: React.ReactNode
 }) {
   return (
-    <header className="flex h-14 items-center gap-2 border-b border-gray-100 bg-white px-6 text-sm text-gray-700">
+    <header className="flex h-14 items-center gap-2 border-b border-c-line bg-c-card px-6 text-sm text-c-ink">
       {/* Mobile opener reserved space — only present at <lg, but lg:pl-1 keeps
           the breadcrumb aligned with the desktop layout's main canvas. */}
-      <h1 className="min-w-0 flex items-center gap-2 truncate pl-12 font-medium text-gray-900 lg:pl-1">
+      <h1 className="min-w-0 flex items-center gap-2 truncate pl-12 font-medium text-c-ink lg:pl-1">
         {breadcrumb.map((item, index) => (
           <span key={item.label} className="flex items-center gap-2">
             {index > 0 && (
@@ -35,17 +35,17 @@ export function UptimeHeader({
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 aria-hidden="true"
-                className="text-gray-400"
+                className="text-c-muted/70"
               >
                 <path d="m9 6 6 6-6 6" />
               </svg>
             )}
             {item.href ? (
-              <a href={item.href} className="text-gray-500 hover:text-gray-900">
+              <a href={item.href} className="text-c-muted hover:text-c-ink">
                 {item.label}
               </a>
             ) : (
-              <span className="text-gray-900">{item.label}</span>
+              <span className="text-c-ink">{item.label}</span>
             )}
           </span>
         ))}

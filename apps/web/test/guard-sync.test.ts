@@ -25,7 +25,7 @@ describe('syncGuardRoutesToProber', () => {
     listGuardRoutesMock.mockResolvedValueOnce([]);
 
     const result = await syncGuardRoutesToProber('proj_1');
-    expect(result).toEqual({ synced: 0, candidates: 0 });
+    expect(result).toEqual({ synced: 0, candidates: 0, skippedUnverifiable: 0, skippedStale: 0 });
     expect(seedProberTargetsMock).not.toHaveBeenCalled();
     expect(upgradeProberTargetSourceMock).not.toHaveBeenCalled();
   });
@@ -72,7 +72,14 @@ describe('syncGuardRoutesToProber', () => {
 
     const result = await syncGuardRoutesToProber('proj_1');
 
-    expect(result).toEqual({ synced: 1, candidates: 4 });
+    expect(result).toEqual({
+      synced: 1,
+      candidates: 4,
+      // The POST route and the server action are reported, not silently dropped —
+      // the developer has to check those by hand.
+      skippedUnverifiable: 2,
+      skippedStale: 0,
+    });
     expect(seedProberTargetsMock).toHaveBeenCalledWith('proj_1', [
       { path: '/admin/settings', method: 'GET', source: 'guard' },
     ]);
@@ -152,7 +159,9 @@ describe('syncGuardRoutesToProber', () => {
 
     const result = await syncGuardRoutesToProber('proj_1', { now });
 
-    expect(result).toEqual({ synced: 0, candidates: 0 });
+    // `candidates` counts what was considered, so a stale route still shows up —
+    // and is reported as skipped rather than vanishing from the result.
+    expect(result).toEqual({ synced: 0, candidates: 1, skippedUnverifiable: 0, skippedStale: 1 });
     expect(seedProberTargetsMock).not.toHaveBeenCalled();
     expect(upgradeProberTargetSourceMock).not.toHaveBeenCalled();
   });

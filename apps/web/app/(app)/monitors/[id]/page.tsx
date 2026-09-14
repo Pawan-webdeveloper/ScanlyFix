@@ -15,6 +15,7 @@ import { MonitoringDetail } from '@/components/monitors/monitoring-detail.tsx'
 import { UptimeHeader } from '@/components/console/uptime-header.tsx'
 import { UptimeView } from '@/components/monitors/uptime-view.tsx'
 import { Icon } from '@/components/console/icons.tsx'
+import { PageMotion } from '@/components/console/motion.tsx'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -48,6 +49,12 @@ export async function generateMetadata({ params }: Props) {
  * open incident (for the "Down since" timestamp), and the alert config
  * (for the segmented-button initial state). The client component polls the
  * uptime endpoint and incident list on its own.
+ *
+ * The shell is the dashboard's: `console` scope, c-* tokens, 1200px canvas,
+ * PageMotion reveal. This page used to hardcode `bg-white text-gray-900` and
+ * raw Tailwind greys throughout, which meant it rendered as a light page inside
+ * a dark console — the theme toggle in its own header had no effect on the page
+ * under it.
  */
 export default async function MonitorDetailPage({ params }: Props) {
   const { id } = await params
@@ -106,7 +113,7 @@ export default async function MonitorDetailPage({ params }: Props) {
   const config: AlertConfig = parsedConfig.ok ? parsedConfig.config : ({} as AlertConfig)
 
   return (
-    <div className="min-h-dvh bg-white text-gray-900">
+    <div className="console min-h-dvh bg-c-bg text-c-ink">
       <UptimeHeader
         breadcrumb={[
           { label: monitor.projectName, href: `/projects/${monitor.projectId}` },
@@ -114,10 +121,14 @@ export default async function MonitorDetailPage({ params }: Props) {
         ]}
       />
 
-      <div className="mx-auto w-full max-w-[1100px] px-6 py-8 sm:px-10">
+      <div
+        data-motion-scope="monitor-detail"
+        className="mx-auto w-full max-w-[1200px] px-6 py-8 sm:px-10"
+      >
+        <PageMotion scope="monitor-detail" />
         <Link
           href="/monitors"
-          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-900"
+          className="mb-4 inline-flex items-center gap-1 text-xs text-c-muted transition-colors hover:text-c-ink"
         >
           <svg
             width="14"
@@ -178,27 +189,27 @@ function DomainMonitorPage({
   projectUrl: string
 }) {
   return (
-    <div className="min-h-dvh bg-white text-gray-900">
+    <div className="console min-h-dvh bg-c-bg text-c-ink">
       <UptimeHeader breadcrumb={[{ label: projectName }, { label: 'Monitoring' }]} />
 
-      <div className="mx-auto w-full max-w-[900px] px-6 py-8 sm:px-10">
+      <div className="mx-auto w-full max-w-[1200px] px-6 py-8 sm:px-10">
         <Link
           href="/monitoring"
-          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-900"
+          className="mb-4 inline-flex items-center gap-1 text-xs text-c-muted transition-colors hover:text-c-ink"
         >
           <Icon name="feed" size={13} />
           Back to Monitoring
         </Link>
 
-        <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-          <header className="flex items-center justify-between gap-4 border-b border-gray-100 px-6 py-4">
+        <section className="overflow-hidden rounded-lg border border-c-line bg-c-card shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          <header className="flex items-center justify-between gap-4 border-b border-c-line px-6 py-4">
             <div className="min-w-0">
-              <h2 className="text-sm font-medium text-gray-900">{projectName}</h2>
-              <p className="mt-0.5 truncate font-mono text-xs text-gray-500">
+              <h2 className="text-sm font-medium text-c-ink">{projectName}</h2>
+              <p className="mt-0.5 truncate font-mono text-xs text-c-muted">
                 {projectUrl}
               </p>
             </div>
-            <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-700">
+            <span className="inline-flex items-center gap-1 rounded-md border border-c-line bg-c-soft px-2 py-0.5 text-[11px] font-medium text-c-ink">
               <Icon name="shield" size={11} />
               SSL &amp; Domain
             </span>

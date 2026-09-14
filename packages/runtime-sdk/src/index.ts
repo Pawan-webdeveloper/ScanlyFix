@@ -1,6 +1,7 @@
-export { withGuard, type GuardOptions, type WaitUntilExecutor } from './guard/middleware.ts';
+export { withGuard, reportAuthFailure, type GuardOptions, type WaitUntilExecutor } from './guard/middleware.ts';
 export { normalizePathname } from './guard/normalize.ts';
-export { buildRouteEvent, type RequestSnapshot, type RouteEvent } from './guard/observe.ts';
+export { buildRouteEvent, type BuildRouteEventOptions, type RequestSnapshot, type RouteEvent } from './guard/observe.ts';
+export { classifyOutcome, isSignInDestination, isPassThrough, type ResponseLike, type RouteOutcome } from './guard/outcome.ts';
 export { hasSessionCookie, DEFAULT_SESSION_COOKIE_PATTERNS, type SessionDetectionOptions } from './guard/session.ts';
 export { createRuntime, type RuntimeClient, type RuntimeConfig, type AiCallEvent, type RuntimeEvent } from './runtime.ts';
 
@@ -25,4 +26,28 @@ export {
   type ModelPricing,
 } from './ai/pricing.ts';
 export { estimateTokens, estimatePromptTokens, estimateProjectedCost } from './ai/estimate.ts';
+export { classifyAiError, extractStatus, AI_ERROR_KINDS, type AiErrorKind } from './ai/error-kind.ts';
+export { makeSuccessEvent, makeErrorEvent, type AiProvider } from './ai/report.ts';
 export { hashUserId } from './ai/hash.ts';
+export {
+  detectThreats,
+  normalizeForScan,
+  scanText,
+  RULES,
+  buildThreatEvents,
+  buildAuthAttemptEvent,
+  buildAuthFailureEvent,
+  clientIpFrom,
+  parseClientIp,
+  isAuthAttempt,
+  SEVERITY_BY_KIND,
+  THREAT_KINDS,
+  THREAT_SURFACES,
+  type ThreatConfidence,
+  type ThreatEvent,
+  type ThreatKind,
+  type ThreatMatch,
+  type ThreatSeverity,
+  type ThreatSurface,
+  type RequestSnapshotForThreats,
+} from './threat/index.ts';

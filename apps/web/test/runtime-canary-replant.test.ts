@@ -7,6 +7,12 @@ const retireCanariesMock = vi.fn();
 const seedCanariesMock = vi.fn();
 const acknowledgeCanaryEventMock = vi.fn();
 
+vi.mock('@/lib/entitlements', () => ({
+  // The Pro gate is exercised by its own test; here it is always open so these
+  // tests keep covering what they are about.
+  hasRuntimeAccess: async () => true,
+}));
+
 vi.mock('@/lib/authz', () => ({
   requireUser: vi.fn().mockResolvedValue({ id: 'user-123' }),
   getViewer: (...args: unknown[]) => getViewerMock(...args),
@@ -25,8 +31,20 @@ vi.mock('next/cache', () => ({
 }));
 
 import { markEventReviewedAction, rePlantCanariesAction } from '../app/(app)/runtime/canaries/action';
+import { buildSetupScript } from '../lib/runtime/canaries/setup-script.ts';
 
-describe('rePlantCanariesAction — compromise recovery flow (TASK 7)', () => {
+/**
+ * Compromise recovery — the path that was entirely broken.
+ *
+ * Markers used to be derived from the project id alone, so every script for a
+ * project produced the same three. `seedCanaries` upserts on
+ * (projectId, markerToken) with ON CONFLICT DO NOTHING, so after the old rows
+ * were retired the "fresh" ones collided with them and were dropped: the
+ * project ended up with no live decoys, the SQL the customer pasted carried new
+ * random honeytoken paths that matched nothing we had stored, and the verify
+ * step then reported success because there were no markers left to look for.
+ */
+describe('rePlantCanariesAction — compromise recovery', () => {
   const projectId = 'proj-recov-1';
   const project = { id: projectId, name: 'Recovery Project' };
 
@@ -34,79 +52,78 @@ describe('rePlantCanariesAction — compromise recovery flow (TASK 7)', () => {
     vi.clearAllMocks();
     getViewerMock.mockResolvedValue({ kind: 'user', userId: 'user-123' });
     getProjectMock.mockResolvedValue(project);
+    // Four rows: three decoys plus the self-test row.
+    seedCanariesMock.mockImplementation(async (_p: string, seeds: unknown[]) => seeds.length);
   });
 
-  it('rejects if no canaries exist', async () => {
+  it('refuses when there is nothing to re-plant', async () => {
     listCanariesMock.mockResolvedValue([]);
-
     const res = await rePlantCanariesAction(projectId);
-    expect(res).toEqual({ ok: false, error: 'no_canaries_found' });
-    expect(retireCanariesMock).not.toHaveBeenCalled();
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/nothing to re-plant/i);
+    expect(seedCanariesMock).not.toHaveBeenCalled();
   });
 
-  it('rejects if canaries exist but are only pending_script', async () => {
+  it('retires the old decoys and registers genuinely new markers', async () => {
     listCanariesMock.mockResolvedValue([
-      { id: 'c1', markerToken: 'CANARY::old::A', status: 'pending_script' },
-    ]);
-
-    const res = await rePlantCanariesAction(projectId);
-    expect(res).toEqual({ ok: false, error: 'canaries_not_eligible_for_replant' });
-    expect(retireCanariesMock).not.toHaveBeenCalled();
-  });
-
-  it('allows replant when canaries are compromised → retires old, seeds fresh script', async () => {
-    listCanariesMock.mockResolvedValue([
-      { id: 'c1', markerToken: 'CANARY::old::A', status: 'compromised' },
-      { id: 'c2', markerToken: 'CANARY::old::B', status: 'planted' },
+      { id: 'c1', markerToken: 'CANARY::proj-rec::old1::A', status: 'compromised' },
     ]);
 
     const res = await rePlantCanariesAction(projectId);
 
     expect(res.ok).toBe(true);
-    if (res.ok && res.data) {
-      expect(res.data.sql).toContain('create table if not exists public.scanlyfix_canaries');
-      expect(res.data.sql).toContain('security definer');
-    }
-
-    // 1. Marks old rows retired
     expect(retireCanariesMock).toHaveBeenCalledWith(projectId);
 
-    // 2. Seeds new canary markers into DB with status pending_script
-    expect(seedCanariesMock).toHaveBeenCalledWith(
-      projectId,
-      expect.arrayContaining([
-        expect.objectContaining({
-          marker: expect.stringMatching(/^CANARY::proj-rec::[ABC]$/),
-        }),
-      ]),
-    );
+    const seeded = seedCanariesMock.mock.calls[0]![1] as Array<{ marker: string; honeytokenPath: string; kind?: string }>;
+    // Three decoys plus one self-test row.
+    expect(seeded).toHaveLength(4);
+    expect(seeded.filter((x) => x.kind === 'selftest')).toHaveLength(1);
+    // Nothing collides with the retired marker.
+    expect(seeded.every((x) => x.marker !== 'CANARY::proj-rec::old1::A')).toBe(true);
+    // Every honeytoken path is distinct and actually stored.
+    expect(new Set(seeded.map((x) => x.honeytokenPath)).size).toBe(4);
   });
 
-  it('allows replant when canaries are planted', async () => {
-    listCanariesMock.mockResolvedValue([
-      { id: 'c1', markerToken: 'CANARY::old::A', status: 'planted' },
-    ]);
+  it('produces different markers every time, so a second planting cannot be dropped as a conflict', () => {
+    const first = buildSetupScript({ projectId, appDomain: 'app.test' });
+    const second = buildSetupScript({ projectId, appDomain: 'app.test' });
+
+    expect(first.plantId).not.toBe(second.plantId);
+    const firstMarkers = new Set(first.seeds.map((s) => s.marker));
+    for (const seed of second.seeds) expect(firstMarkers.has(seed.marker)).toBe(false);
+    expect(first.selfTest.marker).not.toBe(second.selfTest.marker);
+  });
+
+  it('fails loudly rather than quietly when the database drops a decoy', async () => {
+    listCanariesMock.mockResolvedValue([{ id: 'c1', markerToken: 'x', status: 'planted' }]);
+    // A conflict means honeytoken paths in the SQL were never stored.
+    seedCanariesMock.mockResolvedValue(2);
 
     const res = await rePlantCanariesAction(projectId);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/could not be re-planted/i);
+  });
+
+  it('considers retired rows, so recovery works even after everything was retired', async () => {
+    listCanariesMock.mockResolvedValue([{ id: 'c1', markerToken: 'x', status: 'retired' }]);
+    const res = await rePlantCanariesAction(projectId);
     expect(res.ok).toBe(true);
-    expect(retireCanariesMock).toHaveBeenCalledWith(projectId);
-    expect(seedCanariesMock).toHaveBeenCalled();
+    expect(listCanariesMock).toHaveBeenCalledWith(projectId, { includeRetired: true });
   });
 });
 
-describe('markEventReviewedAction — acknowledge without deleting evidence (TASK 7)', () => {
+describe('markEventReviewedAction', () => {
   const projectId = 'proj-recov-1';
-  const eventId = 'event-uuid-777';
 
   beforeEach(() => {
     vi.clearAllMocks();
-    getProjectMock.mockResolvedValue({ id: projectId });
+    getViewerMock.mockResolvedValue({ kind: 'user', userId: 'user-123' });
+    getProjectMock.mockResolvedValue({ id: projectId, name: 'p' });
   });
 
-  it('calls acknowledgeCanaryEvent to set acknowledged_at timestamp', async () => {
-    const res = await markEventReviewedAction(projectId, eventId);
-
-    expect(res).toEqual({ ok: true });
-    expect(acknowledgeCanaryEventMock).toHaveBeenCalledWith(projectId, eventId);
+  it('acknowledges without deleting the evidence', async () => {
+    const res = await markEventReviewedAction(projectId, 'evt-1');
+    expect(res.ok).toBe(true);
+    expect(acknowledgeCanaryEventMock).toHaveBeenCalledWith(projectId, 'evt-1');
   });
 });

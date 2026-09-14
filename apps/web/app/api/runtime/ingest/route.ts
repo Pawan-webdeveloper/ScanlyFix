@@ -2,11 +2,15 @@ import { NextResponse, type NextRequest } from 'next/server';
 import {
   recordRouteEvents,
   recordAiCallEvents,
+  recordThreatEvents,
+  type ThreatEventInput,
   getProjectRuntimeSecret,
   getProjectRuntimeAuthSecrets,
   findProjectIdByHost,
   type IngestRouteEvent,
   type IngestAiCallEvent,
+  type RouteOutcome,
+  type AiErrorKind,
 } from '@scanlyfix/db';
 import {
   estimateServerCostMicroUsd,
@@ -17,6 +21,7 @@ import {
   secretsEqual,
   verifySignature,
 } from '@/lib/runtime/auth.ts';
+import { validateThreatEvent } from '@/lib/runtime/threats/validate.ts';
 
 export const runtime = 'nodejs';
 
@@ -32,6 +37,25 @@ const ROUTE_PATTERN_REGEX = /^\/[a-zA-Z0-9_\-./:[\]*~]{0,255}$/;
 /** Allowed HTTP methods for route observation. */
 const ALLOWED_HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 
+/** What the caller's middleware did with a logged-out request. Anything else is dropped to 'unknown'. */
+const ALLOWED_ROUTE_OUTCOMES = new Set<RouteOutcome>(['blocked', 'passed', 'unknown']);
+
+/**
+ * Closed set of AI failure labels. Listed here beside the other validation
+ * rules rather than imported, so the allowlist this route enforces is visible
+ * in the file that enforces it. A drift test pins it to the canonical list.
+ */
+export const ALLOWED_AI_ERROR_KINDS: ReadonlySet<AiErrorKind> = new Set<AiErrorKind>([
+  'ceiling',
+  'rate_limit',
+  'auth',
+  'bad_request',
+  'timeout',
+  'server_error',
+  'network',
+  'unknown',
+]);
+
 /** Allowed characters for model and provider identifiers. */
 const SAFE_IDENTIFIER_REGEX = /^[a-zA-Z0-9_.:/-]{1,128}$/;
 
@@ -44,8 +68,20 @@ const MAX_SAFE_TOKENS = 10_000_000;
 /** Upper sanity bound for call latency (1 hour = 3,600,000 ms). */
 const MAX_SAFE_LATENCY_MS = 3_600_000;
 
+/**
+ * Threat events accepted per request.
+ *
+ * The SDK reports at most three per request and only when something matched, so
+ * a batch full of them means either a site under sustained attack or a client
+ * that has gone wrong. Either way there is no reason to write more than this in
+ * one transaction: the table is fed by anonymous internet traffic and is the
+ * only one an outsider can influence the size of.
+ */
+const MAX_THREAT_EVENTS_PER_REQUEST = 50;
+
 type IngestPayloadEvent =
   | (IngestRouteEvent & { type?: 'route' })
+  | ({ type: 'threat' } & Record<string, unknown>)
   | {
       type: 'ai_call';
       provider: string;
@@ -55,6 +91,8 @@ type IngestPayloadEvent =
       latencyMs?: number;
       costMicroUsd?: number;
       userHash?: string | null;
+      status?: string | null;
+      errorKind?: string | null;
     };
 
 export async function POST(req: NextRequest) {
@@ -171,15 +209,26 @@ export async function POST(req: NextRequest) {
         recorded: 0,
         recordedRoutes: 0,
         recordedAi: 0,
+        recordedThreats: 0,
       });
     }
 
     const routeEvents: IngestRouteEvent[] = [];
     const aiEvents: IngestAiCallEvent[] = [];
+    const threatEvents: ThreatEventInput[] = [];
     const modelCatalog = await getCachedModelCatalog();
 
     for (const ev of body.events) {
       if (!ev || typeof ev !== 'object') continue;
+
+      if (ev.type === 'threat') {
+        if (threatEvents.length >= MAX_THREAT_EVENTS_PER_REQUEST) continue;
+        // Everything hostile arrives here: the sender is authenticated, but what
+        // it relays is a payload an attacker wrote. See validateThreatEvent.
+        const validated = validateThreatEvent(ev as Record<string, unknown>);
+        if (validated) threatEvents.push(validated);
+        continue;
+      }
 
       if (ev.type === 'ai_call') {
         const rawPrompt = ev.promptTokens;
@@ -224,14 +273,26 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // A failed call is reported with zero tokens and zero cost by the SDK.
+        // The server enforces that regardless of what arrived: a client that
+        // reports an error with a cost attached must not be able to inflate
+        // spend, which is the number the ceiling is judged against.
+        const isError = ev.status === 'error';
+        const rawErrorKind = typeof ev.errorKind === 'string' ? ev.errorKind.trim() : '';
+        const errorKind: AiErrorKind | null = isError
+          ? (ALLOWED_AI_ERROR_KINDS.has(rawErrorKind as AiErrorKind) ? (rawErrorKind as AiErrorKind) : 'unknown')
+          : null;
+
         aiEvents.push({
           provider,
           model,
-          promptTokens,
-          completionTokens,
+          promptTokens: isError ? 0 : promptTokens,
+          completionTokens: isError ? 0 : completionTokens,
           latencyMs,
-          costMicroUsd,
+          costMicroUsd: isError ? 0 : costMicroUsd,
           userHash,
+          status: isError ? 'error' : null,
+          errorKind,
         });
       } else if ('pattern' in ev && 'method' in ev) {
         const routeEv = ev as IngestRouteEvent;
@@ -241,11 +302,13 @@ export async function POST(req: NextRequest) {
         // Validate pattern matches safe URL path regex & method is standard HTTP verb
         if (ROUTE_PATTERN_REGEX.test(rawPattern) && ALLOWED_HTTP_METHODS.has(rawMethod)) {
           const rawKind = routeEv.kind ? String(routeEv.kind).trim().slice(0, 32) : undefined;
+          const rawOutcome = String(routeEv.outcome ?? '').trim() as RouteOutcome;
           routeEvents.push({
             pattern: rawPattern,
             method: rawMethod,
             kind: rawKind && /^[a-zA-Z0-9_-]{1,32}$/.test(rawKind) ? rawKind : undefined,
             hasSession: Boolean(routeEv.hasSession),
+            outcome: ALLOWED_ROUTE_OUTCOMES.has(rawOutcome) ? rawOutcome : 'unknown',
           });
         }
       }
@@ -253,6 +316,7 @@ export async function POST(req: NextRequest) {
 
     let recordedRoutes = 0;
     let recordedAi = 0;
+    let recordedThreats = 0;
 
     if (routeEvents.length > 0) {
       recordedRoutes = await recordRouteEvents(projectId, routeEvents);
@@ -260,12 +324,16 @@ export async function POST(req: NextRequest) {
     if (aiEvents.length > 0) {
       recordedAi = await recordAiCallEvents(projectId, aiEvents);
     }
+    if (threatEvents.length > 0) {
+      recordedThreats = await recordThreatEvents(projectId, threatEvents);
+    }
 
     return NextResponse.json({
       ok: true,
-      recorded: recordedRoutes + recordedAi,
+      recorded: recordedRoutes + recordedAi + recordedThreats,
       recordedRoutes,
       recordedAi,
+      recordedThreats,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -211,6 +211,18 @@ export function UptimeView(props: UptimeViewProps) {
     let cancelled = false
     const tick = () => {
       if (cancelled) return
+      /*
+       * Nothing is polled for a tab nobody is looking at.
+       *
+       * Each tick is five requests. Without this guard a page left open
+       * overnight sends about nine thousand of them, none of which anyone
+       * reads — and the visibilitychange handler below already refreshes the
+       * moment the tab comes back, so a hidden tab loses nothing by waiting.
+       * On a phone the guard is the difference between a background tab that
+       * costs battery all night and one that costs nothing.
+       */
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+
       // Each fetcher is fire-and-forget — they swallow their own errors so
       // a transient 5xx on /api/monitors does not freeze the timeline. The
       // timeline degrades gracefully; the next tick (15s later) re-tries
@@ -285,8 +297,8 @@ export function UptimeView(props: UptimeViewProps) {
       {/* Project title row */}
       <header className="flex flex-wrap items-end justify-between gap-4 pb-2">
         <div>
-          <p className="font-mono text-xs text-gray-500">{projectUrl}</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">
+          <p className="font-mono text-xs text-c-muted">{projectUrl}</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-c-ink">
             {projectName}
           </h1>
         </div>
@@ -295,7 +307,7 @@ export function UptimeView(props: UptimeViewProps) {
             type="button"
             onClick={handleRunCheck}
             disabled={isChecking}
-            className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-md border border-c-line bg-c-card px-3 py-1.5 text-xs font-medium text-c-ink transition-colors hover:bg-c-soft disabled:opacity-60"
           >
             <RefreshIcon className={isChecking ? 'animate-spin' : ''} />
             {isChecking ? 'Checking…' : 'Run check'}
@@ -317,17 +329,17 @@ export function UptimeView(props: UptimeViewProps) {
 
       {/* Availability card with period tabs + actions */}
       <section
-        className="rounded-lg border border-gray-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+        className="rounded-lg border border-c-line bg-c-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
         aria-label="Availability"
       >
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
-          <h2 className="text-[15px] font-semibold text-gray-900">Availability</h2>
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-c-line px-5 py-4">
+          <h2 className="text-[15px] font-semibold text-c-ink">Availability</h2>
           <div className="flex flex-wrap items-center gap-2">
             <PeriodTabs value={period} onChange={setPeriod} />
-            <div className="ml-2 h-5 w-px bg-gray-200" aria-hidden="true" />
+            <div className="ml-2 h-5 w-px bg-c-line" aria-hidden="true" />
             <button
               type="button"
-              className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-c-line bg-c-card px-3 py-1.5 text-xs font-medium text-c-ink transition-colors hover:bg-c-soft"
             >
               <ExternalIcon />
               {publicStatusHref ? (
@@ -344,7 +356,7 @@ export function UptimeView(props: UptimeViewProps) {
 
         <div className="px-5 py-5">
           <AvailabilityTimeline events={events} days={90} intervalMs={intervalS * 1000} />
-          <p className="mt-3 text-xs text-gray-500">
+          <p className="mt-3 text-xs text-c-muted">
             Hover a day for its downtime · times in UTC
           </p>
         </div>
@@ -390,7 +402,7 @@ function PeriodTabs({
     <div
       role="tablist"
       aria-label="Availability period"
-      className="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 p-0.5"
+      className="inline-flex items-center rounded-md border border-c-line bg-c-soft p-0.5"
     >
       {(['7d', '30d'] as const).map((option) => {
         const active = option === value
@@ -403,8 +415,8 @@ function PeriodTabs({
             onClick={() => onChange(option)}
             className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
               active
-                ? 'border border-blue-200 bg-white text-blue-700 shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'border border-blue-200 bg-c-card text-blue-700 shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
+                : 'text-c-muted hover:text-c-ink'
             }`}
           >
             {option === '7d' ? '7 days' : '30 days'}
@@ -417,7 +429,7 @@ function PeriodTabs({
 
 function MonitoringToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
-    <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+    <label className="inline-flex items-center gap-2 text-xs text-c-ink">
       <span className="font-medium">Monitoring {on ? 'on' : 'off'}</span>
       <button
         type="button"
@@ -425,11 +437,11 @@ function MonitoringToggle({ on, onToggle }: { on: boolean; onToggle: () => void 
         aria-checked={on}
         onClick={onToggle}
         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-          on ? 'bg-emerald-500' : 'bg-gray-300'
+          on ? 'bg-emerald-500' : 'bg-c-line'
         }`}
       >
         <span
-          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+          className={`inline-block h-4 w-4 transform rounded-full bg-c-card shadow transition-transform ${
             on ? 'translate-x-4' : 'translate-x-0.5'
           }`}
         />
@@ -448,7 +460,7 @@ function CopyLinkButton({ href, disabled }: { href: string; disabled?: boolean }
           void navigator.clipboard.writeText(href)
         }
       }}
-      className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex items-center gap-1.5 rounded-md border border-c-line bg-c-card px-3 py-1.5 text-xs font-medium text-c-ink transition-colors hover:bg-c-soft disabled:cursor-not-allowed disabled:opacity-50"
     >
       <CopyIcon />
       Copy link

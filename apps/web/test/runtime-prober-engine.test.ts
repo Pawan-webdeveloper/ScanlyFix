@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ProbeEvidence } from '../lib/runtime/auth-prober/types.ts';
 
 const getRuntimeProjectContextMock = vi.fn();
 const listProberTargetsMock = vi.fn();
@@ -9,6 +11,7 @@ const findUnresolvedFindingMock = vi.fn();
 const insertFindingMock = vi.fn();
 const touchFindingMock = vi.fn();
 const autoResolveFindingMock = vi.fn();
+const listFindingsMock = vi.fn();
 
 vi.mock('@scanlyfix/db', () => ({
   getRuntimeProjectContext: (...args: unknown[]) => getRuntimeProjectContextMock(...args),
@@ -20,14 +23,21 @@ vi.mock('@scanlyfix/db', () => ({
   insertFinding: (...args: unknown[]) => insertFindingMock(...args),
   touchFinding: (...args: unknown[]) => touchFindingMock(...args),
   autoResolveFinding: (...args: unknown[]) => autoResolveFindingMock(...args),
+  listFindings: (...args: unknown[]) => listFindingsMock(...args),
 }));
 
 const probeTargetMock = vi.fn();
 const probeTargetWithAnonKeyMock = vi.fn();
-vi.mock('../lib/runtime/auth-prober/probe.ts', () => ({
-  probeTarget: (...args: unknown[]) => probeTargetMock(...args),
-  probeTargetWithAnonKey: (...args: unknown[]) => probeTargetWithAnonKeyMock(...args),
-}));
+const fetchHomeFingerprintMock = vi.fn();
+vi.mock('../lib/runtime/auth-prober/probe.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/runtime/auth-prober/probe.ts')>();
+  return {
+    ...actual,
+    probeTarget: (...args: unknown[]) => probeTargetMock(...args),
+    probeTargetWithAnonKey: (...args: unknown[]) => probeTargetWithAnonKeyMock(...args),
+    fetchHomeFingerprint: (...args: unknown[]) => fetchHomeFingerprintMock(...args),
+  };
+});
 
 const getOrRefreshProjectAnonKeyMock = vi.fn();
 vi.mock('../lib/runtime/auth-prober/anon-key.ts', () => ({
@@ -36,140 +46,144 @@ vi.mock('../lib/runtime/auth-prober/anon-key.ts', () => ({
 
 import { runAuthProber } from '../lib/runtime/auth-prober/engine.ts';
 
+const VERIFIED = { id: 'proj_1', hostname: 'example.com', isVerified: true };
+
+function evidence(partial: Partial<ProbeEvidence>): ProbeEvidence {
+  return {
+    contentType: 'text/html',
+    bodyBytes: 1200,
+    bodySample: 'Admin console Users Settings',
+    bodyHash: 'aaaaaaaaaaaaaaaa',
+    location: null,
+    wwwAuthenticate: null,
+    bodyKind: 'html_app',
+    title: 'Admin',
+    ...partial,
+  };
+}
+
+/** Keyed dedupe mock: `open` maps "path|variant" → existing finding. */
+function openFindings(map: Record<string, { id: string }>) {
+  findUnresolvedFindingMock.mockImplementation((_p: string, path: string, _m: string, variant: string | null) =>
+    Promise.resolve(map[`${path}|${variant ?? 'null'}`] ?? null),
+  );
+}
+
 describe('runtime auth prober — engine execution flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getOrRefreshProjectAnonKeyMock.mockResolvedValue(null);
+    fetchHomeFingerprintMock.mockResolvedValue(null);
+    listFindingsMock.mockResolvedValue([]);
+    openFindings({});
+    insertFindingMock.mockImplementation((input: Record<string, unknown>) => Promise.resolve({ id: 'f_new', ...input }));
   });
 
   it('skips run if project does not exist or has no hostname', async () => {
     getRuntimeProjectContextMock.mockResolvedValueOnce(null);
-
     const summary = await runAuthProber('proj_missing');
     expect(summary.checked).toBe(0);
-    expect(summary.baselinesRecorded).toBe(0);
     expect(listProberTargetsMock).not.toHaveBeenCalled();
   });
 
   it('skips run if domain is unverified to prevent abuse', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_unverified',
-      hostname: 'unverified.com',
-      isVerified: false,
-    });
-
-    const summary = await runAuthProber('proj_unverified');
+    getRuntimeProjectContextMock.mockResolvedValueOnce({ ...VERIFIED, isVerified: false });
+    const summary = await runAuthProber('proj_1');
     expect(summary.checked).toBe(0);
     expect(listProberTargetsMock).not.toHaveBeenCalled();
+    expect(fetchHomeFingerprintMock).not.toHaveBeenCalled();
   });
 
   it('seeds default targets if no targets exist initially', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-
-    // First call empty, second call returns seeded targets
+    getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
     listProberTargetsMock
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { id: 't_1', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: null },
-      ]);
-
+      .mockResolvedValueOnce([{ id: 't_1', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: null }]);
     probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
 
     const summary = await runAuthProber('proj_1');
     expect(seedProberTargetsMock).toHaveBeenCalledTimes(1);
-    expect(setBaselineMock).toHaveBeenCalledWith('t_1', 401);
+    const seeded = seedProberTargetsMock.mock.calls[0]![1] as Array<{ path: string; source: string }>;
+    expect(seeded.length).toBeGreaterThan(16);
+    expect(seeded.every((t) => t.source === 'default')).toBe(true);
+    expect(setBaselineMock).toHaveBeenCalledWith('t_1', 401, expect.objectContaining({ verdict: 'baseline_recorded' }));
     expect(summary.baselinesRecorded).toBe(1);
   });
 
-  it('records initial baseline on first probe without raising findings', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: null },
-    ]);
-
+  it('records initial baseline on first probe without raising findings (legacy status-only outcome)', async () => {
+    getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+    listProberTargetsMock.mockResolvedValueOnce([{ id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: null }]);
     probeTargetMock.mockResolvedValueOnce({ ok: true, status: 403 });
 
     const onNewFindings = vi.fn();
     const summary = await runAuthProber('proj_1', { onNewFindings });
-
-    expect(setBaselineMock).toHaveBeenCalledWith('t_admin', 403);
+    expect(setBaselineMock).toHaveBeenCalledWith('t_admin', 403, expect.anything());
     expect(summary.baselinesRecorded).toBe(1);
     expect(summary.newFindings).toBe(0);
     expect(onNewFindings).not.toHaveBeenCalled();
   });
 
-  it('detects regression (protected → 200 OK), inserts finding and calls hook', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 },
-    ]);
-
-    // Probe returns 200 OK (unauthenticated access permitted!)
-    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200 });
-    findUnresolvedFindingMock.mockResolvedValueOnce(null);
-    insertFindingMock.mockResolvedValueOnce({
-      id: 'f_1',
-      path: '/admin',
-      severity: 'critical',
-      baselineStatus: 403,
-      actualStatus: 200,
-    });
+  it('detects regression (protected → 200 OK), inserts finding with category/evidence and calls hook', async () => {
+    getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+    listProberTargetsMock.mockResolvedValueOnce([{ id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 }]);
+    const ev = evidence({});
+    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200, evidence: ev });
 
     const onNewFindings = vi.fn();
     const summary = await runAuthProber('proj_1', { onNewFindings });
 
-    expect(recordCheckMock).toHaveBeenCalledWith('t_admin', 200);
-    expect(insertFindingMock).toHaveBeenCalledWith({
-      projectId: 'proj_1',
-      targetId: 't_admin',
-      path: '/admin',
-      method: 'GET',
-      baselineStatus: 403,
-      actualStatus: 200,
-      severity: 'critical',
-      variant: null,
-      keyFingerprint: null,
-    });
-    expect(summary.newFindings).toBe(1);
-    expect(onNewFindings).toHaveBeenCalledWith([
-      {
+    expect(recordCheckMock).toHaveBeenCalledWith('t_admin', 200, expect.objectContaining({ verdict: 'open' }));
+    expect(insertFindingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'proj_1',
+        targetId: 't_admin',
         path: '/admin',
-        severity: 'critical',
+        method: 'GET',
         baselineStatus: 403,
         actualStatus: 200,
+        severity: 'critical',
         variant: null,
         keyFingerprint: null,
-      },
+        category: 'admin',
+        evidence: expect.objectContaining({ bodyKind: 'html_app', title: 'Admin' }),
+      }),
+    );
+    expect(summary.newFindings).toBe(1);
+    expect(onNewFindings).toHaveBeenCalledTimes(1);
+    expect(onNewFindings.mock.calls[0]![0]).toEqual([
+      expect.objectContaining({ path: '/admin', severity: 'critical', baselineStatus: 403, actualStatus: 200, variant: null, category: 'admin' }),
     ]);
   });
 
-  it('touches existing finding without firing duplicate alert if regression persists', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-
+  it('does NOT flag a 200 that is really the login form, a soft-404 or the SPA shell', async () => {
+    getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
     listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 },
+      { id: 't_a', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 401 },
+      { id: 't_b', projectId: 'proj_1', path: '/dashboard', method: 'GET', baselineStatus: 307 },
+      { id: 't_c', projectId: 'proj_1', path: '/settings', method: 'GET', baselineStatus: 302 },
     ]);
+    probeTargetMock
+      .mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ bodyKind: 'login_page', title: 'Sign in' }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ bodyKind: 'soft_404', title: '404' }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ bodyKind: 'spa_shell' }) });
 
-    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200 });
-    findUnresolvedFindingMock.mockResolvedValueOnce({ id: 'existing_finding_1' });
+    const onNewFindings = vi.fn();
+    const summary = await runAuthProber('proj_1', { onNewFindings });
+
+    expect(insertFindingMock).not.toHaveBeenCalled();
+    expect(onNewFindings).not.toHaveBeenCalled();
+    expect(recordCheckMock).toHaveBeenCalledWith('t_a', 200, expect.objectContaining({ verdict: 'protected' }));
+    expect(recordCheckMock).toHaveBeenCalledWith('t_b', 200, expect.objectContaining({ verdict: 'inconclusive' }));
+    expect(recordCheckMock).toHaveBeenCalledWith('t_c', 200, expect.objectContaining({ verdict: 'inconclusive' }));
+    expect(summary.inconclusive).toBe(2);
+    expect(summary.checked).toBe(3);
+  });
+
+  it('touches existing finding without firing duplicate alert if regression persists', async () => {
+    getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+    listProberTargetsMock.mockResolvedValueOnce([{ id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 }]);
+    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({}) });
+    openFindings({ '/admin|null': { id: 'existing_finding_1' } });
 
     const onNewFindings = vi.fn();
     const summary = await runAuthProber('proj_1', { onNewFindings });
@@ -182,190 +196,237 @@ describe('runtime auth prober — engine execution flow', () => {
   });
 
   it('auto-resolves open finding when endpoint returns protected status again', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 },
-    ]);
-
-    // Now protected again (e.g. 403 Forbidden or 307 Redirect)
-    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 403 });
-    findUnresolvedFindingMock.mockResolvedValueOnce({ id: 'past_finding_id' });
+    getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+    listProberTargetsMock.mockResolvedValueOnce([{ id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 }]);
+    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 403, evidence: evidence({ bodyKind: 'text', title: null }) });
+    openFindings({ '/admin|null': { id: 'past_finding_id' } });
 
     const summary = await runAuthProber('proj_1');
     expect(autoResolveFindingMock).toHaveBeenCalledWith('past_finding_id');
+    expect(autoResolveFindingMock).toHaveBeenCalledTimes(1);
     expect(summary.autoResolved).toBe(1);
     expect(summary.checked).toBe(1);
   });
 
   it('handles probe network errors gracefully without false alarms', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 },
-    ]);
-
+    getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+    listProberTargetsMock.mockResolvedValueOnce([{ id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 }]);
     probeTargetMock.mockResolvedValueOnce({ ok: false, error: 'network_timeout' });
 
     const onNewFindings = vi.fn();
     const summary = await runAuthProber('proj_1', { onNewFindings });
-
     expect(summary.errors).toBe(1);
     expect(summary.checked).toBe(0);
     expect(summary.newFindings).toBe(0);
     expect(onNewFindings).not.toHaveBeenCalled();
   });
 
-  it('skips anon probe when project has no anon key', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
+  describe('exposure on first probe', () => {
+    it('raises an "exposed" finding AND records the baseline when an API answers JSON data without login', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_api', projectId: 'proj_1', path: '/api/users', method: 'GET', baselineStatus: null }]);
+      probeTargetMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        evidence: evidence({ contentType: 'application/json', bodyKind: 'json_data', title: null, bodySample: '[{"id":1,"email":"a@b.c"}]' }),
+      });
+
+      const onNewFindings = vi.fn();
+      const summary = await runAuthProber('proj_1', { onNewFindings });
+
+      expect(setBaselineMock).toHaveBeenCalledWith('t_api', 200, expect.objectContaining({ verdict: 'exposed' }));
+      expect(insertFindingMock).toHaveBeenCalledWith(
+        expect.objectContaining({ path: '/api/users', variant: 'exposed', severity: 'critical', category: 'api', baselineStatus: 200, actualStatus: 200 }),
+      );
+      expect(summary.baselinesRecorded).toBe(1);
+      expect(summary.newFindings).toBe(1);
+      expect(onNewFindings).toHaveBeenCalledTimes(1);
     });
-    getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce(null);
 
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 },
-    ]);
+    it('does not treat an ordinary logged-in page (/dashboard) answering 200 at baseline as exposure', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_dash', projectId: 'proj_1', path: '/dashboard', method: 'GET', baselineStatus: null }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ title: 'Pricing' }) });
 
-    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 403 });
-    findUnresolvedFindingMock.mockResolvedValueOnce(null);
+      const summary = await runAuthProber('proj_1');
+      expect(insertFindingMock).not.toHaveBeenCalled();
+      expect(setBaselineMock).toHaveBeenCalledWith('t_dash', 200, expect.objectContaining({ verdict: 'baseline_recorded' }));
+      expect(summary.newFindings).toBe(0);
+    });
 
-    const summary = await runAuthProber('proj_1');
-    expect(probeTargetWithAnonKeyMock).not.toHaveBeenCalled();
-    expect(summary.checked).toBe(1);
-    expect(summary.newFindings).toBe(0);
+    it('keeps an exposed finding alive on later runs and auto-resolves it once the route is protected', async () => {
+      // Run 1: still open → touch, no new alert
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_dbg', projectId: 'proj_1', path: '/debug', method: 'GET', baselineStatus: 200 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ title: 'Debug' }) });
+      openFindings({ '/debug|exposed': { id: 'f_exposed' } });
+      const onNewFindings = vi.fn();
+      let summary = await runAuthProber('proj_1', { onNewFindings });
+      expect(touchFindingMock).toHaveBeenCalledWith('f_exposed');
+      expect(insertFindingMock).not.toHaveBeenCalled();
+      expect(summary.stillOpen).toBe(1);
+      expect(onNewFindings).not.toHaveBeenCalled();
+
+      // Run 2: now 401 → auto-resolve
+      vi.clearAllMocks();
+      listFindingsMock.mockResolvedValue([]);
+      getOrRefreshProjectAnonKeyMock.mockResolvedValue(null);
+      fetchHomeFingerprintMock.mockResolvedValue(null);
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_dbg', projectId: 'proj_1', path: '/debug', method: 'GET', baselineStatus: 200 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401, evidence: evidence({ bodyKind: 'text', title: null }) });
+      openFindings({ '/debug|exposed': { id: 'f_exposed' } });
+      summary = await runAuthProber('proj_1');
+      expect(autoResolveFindingMock).toHaveBeenCalledWith('f_exposed');
+      expect(summary.autoResolved).toBe(1);
+    });
   });
 
-  it('runs anon probe when target is protected and anon key exists, inserting finding with variant anon_role', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-    getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce({
-      key: 'eyJhbGciOi...',
-      fingerprint: 'abc123def4567890',
-    });
+  describe('sequential-id (IDOR) check', () => {
+    it('probes id=2 for [id] routes that returned JSON data and raises sequential_id when bodies differ', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_u', projectId: 'proj_1', path: '/api/users/[id]', method: 'GET', baselineStatus: null }]);
+      probeTargetMock
+        .mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ contentType: 'application/json', bodyKind: 'json_data', bodyHash: 'h1', title: null }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ contentType: 'application/json', bodyKind: 'json_data', bodyHash: 'h2', title: null }) });
 
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_api', projectId: 'proj_1', path: '/api/data', method: 'GET', baselineStatus: 401 },
-    ]);
+      const summary = await runAuthProber('proj_1');
 
-    // Bare probe is protected (401)
-    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
-    // Plain finding check for auto-resolve
-    findUnresolvedFindingMock.mockResolvedValueOnce(null);
-
-    // Anon probe returns 200 OK (Supabase RLS leak!)
-    probeTargetWithAnonKeyMock.mockResolvedValueOnce({ ok: true, status: 200 });
-    // Anon finding check for duplicate
-    findUnresolvedFindingMock.mockResolvedValueOnce(null);
-    insertFindingMock.mockResolvedValueOnce({
-      id: 'f_anon',
-      path: '/api/data',
-      severity: 'critical',
-      baselineStatus: 401,
-      actualStatus: 200,
-      variant: 'anon_role',
-      keyFingerprint: 'abc123def4567890',
+      expect(probeTargetMock).toHaveBeenCalledTimes(2);
+      expect(probeTargetMock.mock.calls[1]).toEqual(['example.com', '/api/users/[id]', { idValue: '2' }]);
+      const variants = insertFindingMock.mock.calls.map((c) => (c[0] as { variant: string }).variant).sort();
+      expect(variants).toEqual(['exposed', 'sequential_id']);
+      expect(summary.newFindings).toBe(2);
     });
 
-    const onNewFindings = vi.fn();
-    const summary = await runAuthProber('proj_1', { onNewFindings });
+    it('does not raise sequential_id when both ids return the same body (static/mock response)', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_u', projectId: 'proj_1', path: '/api/users/[id]', method: 'GET', baselineStatus: null }]);
+      probeTargetMock
+        .mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ contentType: 'application/json', bodyKind: 'json_data', bodyHash: 'same', title: null }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ contentType: 'application/json', bodyKind: 'json_data', bodyHash: 'same', title: null }) });
 
-    expect(probeTargetWithAnonKeyMock).toHaveBeenCalledWith('example.com', '/api/data', 'eyJhbGciOi...');
-    expect(insertFindingMock).toHaveBeenCalledWith({
-      projectId: 'proj_1',
-      targetId: 't_api',
-      path: '/api/data',
-      method: 'GET',
-      baselineStatus: 401,
-      actualStatus: 200,
-      severity: 'critical',
-      variant: 'anon_role',
-      keyFingerprint: 'abc123def4567890',
+      await runAuthProber('proj_1');
+      const variants = insertFindingMock.mock.calls.map((c) => (c[0] as { variant: string }).variant);
+      expect(variants).toEqual(['exposed']);
     });
-    expect(summary.newFindings).toBe(1);
-    expect(onNewFindings).toHaveBeenCalledWith([
-      expect.objectContaining({
-        path: '/api/data',
-        variant: 'anon_role',
-        keyFingerprint: 'abc123def4567890',
-      }),
-    ]);
+
+    it('skips the extra request for routes without an id placeholder', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_api', projectId: 'proj_1', path: '/api/users', method: 'GET', baselineStatus: null }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({ contentType: 'application/json', bodyKind: 'json_data', title: null }) });
+      await runAuthProber('proj_1');
+      expect(probeTargetMock).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it('verifies finding with variant anon_role dedupes separately from a plain finding', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
-    });
-    getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce({
-      key: 'eyJhbGciOi...',
-      fingerprint: 'abc123def4567890',
-    });
+  describe('anon-key (Supabase RLS) variant', () => {
+    it('skips anon probe when project has no anon key', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 403 });
 
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_api', projectId: 'proj_1', path: '/api/data', method: 'GET', baselineStatus: 401 },
-    ]);
-
-    // Bare probe is protected
-    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
-    // Plain finding check -> returns null
-    findUnresolvedFindingMock.mockResolvedValueOnce(null);
-
-    // Anon probe is open (200)
-    probeTargetWithAnonKeyMock.mockResolvedValueOnce({ ok: true, status: 200 });
-    // Anon finding check -> existing finding found!
-    findUnresolvedFindingMock.mockImplementationOnce((proj, path, method, variant) => {
-      expect(variant).toBe('anon_role');
-      return Promise.resolve({ id: 'existing_anon_finding_1' });
+      const summary = await runAuthProber('proj_1');
+      expect(probeTargetWithAnonKeyMock).not.toHaveBeenCalled();
+      expect(summary.checked).toBe(1);
+      expect(summary.newFindings).toBe(0);
     });
 
-    const summary = await runAuthProber('proj_1');
+    it('runs anon probe when target is protected and anon key exists, inserting finding with variant anon_role', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce({ key: 'eyJhbGciOi...', fingerprint: 'abc123def4567890' });
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_api', projectId: 'proj_1', path: '/api/data', method: 'GET', baselineStatus: 401 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
+      probeTargetWithAnonKeyMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        evidence: evidence({ contentType: 'application/json', bodyKind: 'json_data', title: null }),
+      });
 
-    expect(touchFindingMock).toHaveBeenCalledWith('existing_anon_finding_1');
-    expect(insertFindingMock).not.toHaveBeenCalled();
-    expect(summary.stillOpen).toBe(1);
-    expect(summary.newFindings).toBe(0);
+      const onNewFindings = vi.fn();
+      const summary = await runAuthProber('proj_1', { onNewFindings });
+
+      expect(probeTargetWithAnonKeyMock).toHaveBeenCalledWith('example.com', '/api/data', 'eyJhbGciOi...', expect.anything());
+      expect(insertFindingMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: '/api/data',
+          baselineStatus: 401,
+          actualStatus: 200,
+          severity: 'critical',
+          variant: 'anon_role',
+          keyFingerprint: 'abc123def4567890',
+          category: 'api',
+        }),
+      );
+      expect(summary.newFindings).toBe(1);
+      expect(onNewFindings).toHaveBeenCalledWith([
+        expect.objectContaining({ path: '/api/data', variant: 'anon_role', keyFingerprint: 'abc123def4567890' }),
+      ]);
+    });
+
+    it('anon probe answering 200 with an error-shaped JSON body is NOT an exposure', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce({ key: 'k', fingerprint: 'fp' });
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_api', projectId: 'proj_1', path: '/api/data', method: 'GET', baselineStatus: 401 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
+      probeTargetWithAnonKeyMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        evidence: evidence({ contentType: 'application/json', bodyKind: 'json_error', title: null }),
+      });
+      const summary = await runAuthProber('proj_1');
+      expect(insertFindingMock).not.toHaveBeenCalled();
+      expect(summary.newFindings).toBe(0);
+    });
+
+    it('dedupes anon_role separately from a plain finding', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce({ key: 'k', fingerprint: 'fp' });
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_api', projectId: 'proj_1', path: '/api/data', method: 'GET', baselineStatus: 401 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
+      probeTargetWithAnonKeyMock.mockResolvedValueOnce({ ok: true, status: 200 });
+      openFindings({ '/api/data|anon_role': { id: 'existing_anon_finding_1' } });
+
+      const summary = await runAuthProber('proj_1');
+      expect(touchFindingMock).toHaveBeenCalledWith('existing_anon_finding_1');
+      expect(insertFindingMock).not.toHaveBeenCalled();
+      expect(autoResolveFindingMock).not.toHaveBeenCalled();
+      expect(summary.stillOpen).toBe(1);
+    });
+
+    it('auto-resolves open anon_role finding when anon probe becomes protected again', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce({ key: 'k', fingerprint: 'fp' });
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_api', projectId: 'proj_1', path: '/api/data', method: 'GET', baselineStatus: 401 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
+      probeTargetWithAnonKeyMock.mockResolvedValueOnce({ ok: true, status: 401 });
+      openFindings({ '/api/data|anon_role': { id: 'past_anon_finding_1' } });
+
+      const summary = await runAuthProber('proj_1');
+      expect(autoResolveFindingMock).toHaveBeenCalledWith('past_anon_finding_1');
+      expect(autoResolveFindingMock).toHaveBeenCalledTimes(1);
+      expect(summary.autoResolved).toBe(1);
+    });
   });
 
-  it('auto-resolves open anon_role finding when anon probe becomes protected again', async () => {
-    getRuntimeProjectContextMock.mockResolvedValueOnce({
-      id: 'proj_1',
-      hostname: 'example.com',
-      isVerified: true,
+  describe('flapping suppression', () => {
+    it('still records the finding but withholds the email when the path regressed ≥3 times in 30 days', async () => {
+      getRuntimeProjectContextMock.mockResolvedValueOnce(VERIFIED);
+      listProberTargetsMock.mockResolvedValueOnce([{ id: 't_admin', projectId: 'proj_1', path: '/admin', method: 'GET', baselineStatus: 403 }]);
+      probeTargetMock.mockResolvedValueOnce({ ok: true, status: 200, evidence: evidence({}) });
+      const recent = new Date();
+      listFindingsMock.mockResolvedValue([
+        { path: '/admin', createdAt: recent },
+        { path: '/admin', createdAt: recent },
+        { path: '/admin', createdAt: recent },
+      ]);
+
+      const onNewFindings = vi.fn();
+      const summary = await runAuthProber('proj_1', { onNewFindings });
+      expect(insertFindingMock).toHaveBeenCalledTimes(1);
+      expect(summary.newFindings).toBe(1);
+      expect(summary.suppressedAlerts).toBe(1);
+      expect(onNewFindings).not.toHaveBeenCalled();
     });
-    getOrRefreshProjectAnonKeyMock.mockResolvedValueOnce({
-      key: 'eyJhbGciOi...',
-      fingerprint: 'abc123def4567890',
-    });
-
-    listProberTargetsMock.mockResolvedValueOnce([
-      { id: 't_api', projectId: 'proj_1', path: '/api/data', method: 'GET', baselineStatus: 401 },
-    ]);
-
-    // Bare probe protected (401)
-    probeTargetMock.mockResolvedValueOnce({ ok: true, status: 401 });
-    findUnresolvedFindingMock.mockResolvedValueOnce(null); // plain finding auto-resolve check
-
-    // Anon probe protected (401) — RLS policy has been added/fixed!
-    probeTargetWithAnonKeyMock.mockResolvedValueOnce({ ok: true, status: 401 });
-    findUnresolvedFindingMock.mockResolvedValueOnce({ id: 'past_anon_finding_1' }); // anon finding check
-
-    const summary = await runAuthProber('proj_1');
-
-    expect(autoResolveFindingMock).toHaveBeenCalledWith('past_anon_finding_1');
-    expect(summary.autoResolved).toBe(1);
   });
 });

@@ -61,7 +61,7 @@ export const NAV: readonly NavSection[] = [
   {
     title: 'MONITOR',
     items: [
-      { label: 'Live Threats', icon: 'threat', soon: true },
+      { label: 'Live Threats', icon: 'threat', href: '/threats' },
       { label: 'Uptime', icon: 'uptime', href: '/monitors' },
       { label: 'Monitoring', icon: 'bell', href: '/monitoring' },
     ],

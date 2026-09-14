@@ -41,20 +41,31 @@ describe('refreshGuardAction', () => {
   it('syncs routes and revalidates runtime paths when authorized', async () => {
     requireUserMock.mockResolvedValueOnce({ id: 'user_1' });
     getProjectMock.mockResolvedValueOnce({ id: 'proj_1', name: 'My App' });
-    syncGuardRoutesToProberMock.mockResolvedValueOnce({ synced: 4, candidates: 10 });
+    syncGuardRoutesToProberMock.mockResolvedValueOnce({
+      synced: 4,
+      candidates: 10,
+      skippedUnverifiable: 2,
+      skippedStale: 0,
+    });
 
     const result = await refreshGuardAction('proj_1');
-    expect(result).toEqual({ ok: true, syncedTargets: 4 });
+    expect(result).toMatchObject({ ok: true, syncedTargets: 4, skippedUnverifiable: 2 });
+    // The message names what was skipped, not just what was synced.
+    if (result.ok) {
+      expect(result.message).toContain('4 routes');
+      expect(result.message).toContain('manual check');
+    }
     expect(revalidatePathMock).toHaveBeenCalledWith('/runtime/guard');
     expect(revalidatePathMock).toHaveBeenCalledWith('/runtime');
     expect(revalidatePathMock).toHaveBeenCalledWith('/runtime/probers');
   });
 
-  it('handles unexpected errors gracefully', async () => {
-    requireUserMock.mockRejectedValueOnce(new Error('unauthenticated'));
+  it('maps an unexpected error to a stable code and never leaks its message', async () => {
+    requireUserMock.mockRejectedValueOnce(new Error('connection to db-prod-7.internal:5432 refused'));
 
     const result = await refreshGuardAction('proj_1');
     expect(result).toEqual({ ok: false, error: 'refresh_failed' });
+    expect(JSON.stringify(result)).not.toContain('db-prod-7');
   });
 });
 
