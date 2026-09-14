@@ -45,18 +45,18 @@ function fmt(iso: string | null): string {
 export function DowntimeHistory({ incidents }: DowntimeHistoryProps) {
   return (
     <section
-      className="rounded-lg border border-gray-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+      className="rounded-lg border border-c-line bg-c-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
       aria-label="Downtime history"
     >
-      <header className="flex items-center justify-between gap-4 border-b border-gray-100 px-5 py-4">
-        <h2 className="text-[15px] font-semibold text-gray-900">Downtime history</h2>
-        <span className="text-xs text-gray-500">
+      <header className="flex items-center justify-between gap-4 border-b border-c-line px-5 py-4">
+        <h2 className="text-[15px] font-semibold text-c-ink">Downtime history</h2>
+        <span className="text-xs text-c-muted">
           {incidents.length} recorded
         </span>
       </header>
 
       {incidents.length === 0 ? (
-        <p className="px-5 py-6 text-sm text-gray-500">
+        <p className="px-5 py-6 text-sm text-c-muted">
           No downtime recorded — all good.
         </p>
       ) : (
@@ -80,17 +80,17 @@ function IncidentRow({ incident }: { incident: IncidentEntry }) {
       : 'A check failed; see logs for the full probe response.')
 
   return (
-    <li className="flex items-start justify-between gap-4 px-5 py-4 first:pt-5 last:pb-5 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-gray-100">
+    <li className="flex items-start justify-between gap-4 px-5 py-4 first:pt-5 last:pb-5 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-c-line">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           {isOngoing ? <LivePill /> : <ResolvedPill />}
-          <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+          <h3 className="text-sm font-semibold text-c-ink">{title}</h3>
         </div>
-        <p className="mt-1 text-sm text-gray-600">{description}</p>
+        <p className="mt-1 text-sm text-c-muted">{description}</p>
       </div>
       <time
         dateTime={incident.startedAt}
-        className="shrink-0 text-xs tabular-nums text-gray-500"
+        className="shrink-0 text-xs tabular-nums text-c-muted"
       >
         {fmt(incident.startedAt)}
       </time>
@@ -112,7 +112,7 @@ function LivePill() {
 
 function ResolvedPill() {
   return (
-    <span className="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+    <span className="inline-flex items-center rounded-md border border-c-line bg-c-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-c-muted">
       Resolved
     </span>
   )

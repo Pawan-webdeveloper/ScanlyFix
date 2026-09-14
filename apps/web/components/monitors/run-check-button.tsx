@@ -151,12 +151,12 @@ export function RunCheckButton({ monitorId, onChecked, baseline = null }: RunChe
         aria-busy={phase === 'running'}
         className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-opacity ${
           phase === 'running'
-            ? 'cursor-wait border border-gray-200 bg-white text-gray-400'
+            ? 'cursor-wait border border-c-line bg-c-card text-c-muted/70'
             : phase === 'finished'
               ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
               : phase === 'error'
                 ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
-                : 'border border-gray-900 bg-gray-900 text-white hover:opacity-90'
+                : 'border border-c-ink bg-c-ink text-c-brand-ink hover:opacity-90'
         } disabled:cursor-wait disabled:opacity-100`}
       >
         {phase === 'running' && <Spinner />}
