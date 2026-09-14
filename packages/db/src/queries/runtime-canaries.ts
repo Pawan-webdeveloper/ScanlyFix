@@ -8,7 +8,23 @@ export type CanaryProjectConfig = {
   supabaseUrl: string;
   serviceKey: string; // DECRYPTED — Only in memory, never on the wire.
   anonKey: string | null;
-  snapshot: { payloadHashes: Record<string, string>; logRowCount: number; takenAt: string } | null;
+  snapshot: CanarySnapshot | null;
+};
+
+/**
+ * The tamper-evidence baseline for one project.
+ *
+ * `lastLogId` is the trigger-log watermark: rows above it have not been
+ * reported yet. It is optional because snapshots written before the log was
+ * read have none, and those are re-baselined rather than replayed — reporting a
+ * project's whole trigger history as fresh intrusions would be a false positive
+ * at the worst possible scale.
+ */
+export type CanarySnapshot = {
+  payloadHashes: Record<string, string>;
+  logRowCount: number;
+  lastLogId?: number;
+  takenAt: string;
 };
 
 export type CanaryProjectConfigRaw = {
@@ -115,22 +131,34 @@ export async function retireCanaries(projectId: string): Promise<void> {
     .where(eq(runtimeCanaries.projectId, projectId));
 }
 
+/**
+ * Registers the decoy rows a setup script is about to plant.
+ *
+ * Returns the number actually inserted, which the caller MUST check. A conflict
+ * here is not a harmless no-op: it means the markers collided with rows we
+ * already hold, the honeytoken paths in the SQL the customer is about to paste
+ * were never stored, and every future hit on them will be discarded. Silently
+ * swallowing that is how the compromise-recovery path used to fail.
+ */
 export async function seedCanaries(
   projectId: string,
-  seeds: Array<{ marker: string; honeytokenPath: string }>,
-): Promise<void> {
-  if (seeds.length === 0) return;
-  await db
+  seeds: Array<{ marker: string; honeytokenPath: string; kind?: string }>,
+): Promise<number> {
+  if (seeds.length === 0) return 0;
+  const inserted = await db
     .insert(runtimeCanaries)
     .values(
       seeds.map((s) => ({
         projectId,
         markerToken: s.marker,
         honeytokenPath: s.honeytokenPath,
+        kind: s.kind ?? 'vault',
         status: 'pending_script',
       })),
     )
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: runtimeCanaries.id });
+  return inserted.length;
 }
 
 export async function acknowledgeCanaryEvent(projectId: string, eventId: string): Promise<void> {
@@ -202,12 +230,27 @@ export async function listCanaryEligibleProjectIds(): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
-/** Honeytoken lookup — token se canary (route ke liye). */
+/**
+ * Resolves a honeytoken path to the canary it belongs to.
+ *
+ * Deliberately matches on the path alone, whatever state the canary is in. The
+ * previous version required status='planted', which meant that once a canary
+ * was marked compromised — or retired during recovery — hits on its honeytoken
+ * were discarded. That is exactly backwards: the payload carrying that URL is
+ * already out in the world, and a hit on it is the strongest evidence the
+ * product can produce that the leaked data is being used. The caller gets the
+ * status so it can say which generation was touched.
+ */
 export async function findCanaryByHoneytoken(token: string) {
   const [row] = await db
-    .select({ id: runtimeCanaries.id, projectId: runtimeCanaries.projectId })
+    .select({
+      id: runtimeCanaries.id,
+      projectId: runtimeCanaries.projectId,
+      markerToken: runtimeCanaries.markerToken,
+      status: runtimeCanaries.status,
+    })
     .from(runtimeCanaries)
-    .where(and(eq(runtimeCanaries.honeytokenPath, token), eq(runtimeCanaries.status, 'planted')))
+    .where(eq(runtimeCanaries.honeytokenPath, token))
     .limit(1);
   return row ?? null;
 }

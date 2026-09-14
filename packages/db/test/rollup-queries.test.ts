@@ -162,7 +162,10 @@ describe('rollup queries', () => {
         db: {
           select: mockSelect.mockReturnValue({
             from: vi.fn().mockReturnValue({
-              where: vi.fn().mockResolvedValue([{ total: 100, up: 95, avgLatencyMs: 210, p95LatencyMs: 890 }]),
+              where: vi.fn()
+                .mockResolvedValueOnce([{ total: 100, up: 95, avgLatencyMs: 210, p95LatencyMs: 890 }])
+                .mockResolvedValueOnce([{ at: new Date('2025-01-16T00:00:00Z') }])
+                .mockResolvedValueOnce([]),
             }),
           }),
         },
@@ -243,7 +246,10 @@ describe('rollup queries', () => {
         db: {
           select: mockSelect.mockReturnValue({
             from: vi.fn().mockReturnValue({
-              where: vi.fn().mockResolvedValue([{ total: 720, up: 700, avgLatencyMs: 185, p95LatencyMs: 750 }]),
+              where: vi.fn()
+                .mockResolvedValueOnce([{ total: 720, up: 700, avgLatencyMs: 185, p95LatencyMs: 750 }])
+                .mockResolvedValueOnce([{ at: new Date('2025-02-01T00:00:00Z') }])
+                .mockResolvedValueOnce([]),
             }),
           }),
         },
