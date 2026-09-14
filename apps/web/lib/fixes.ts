@@ -109,7 +109,7 @@ const DEFAULT_MODEL = 'gemini-2.5-flash'
  * to filter out), and one fallback covers the per-model 429/5xx storms without
  * an extra network call to enumerate models on every failure.
  */
-const FALLBACK_MODELS = ['gemini-2.5-flash-lite'] as const
+const FALLBACK_MODELS = ['gemini-3.5-flash-lite'] as const
 
 /**
  * What a completion attempt can conclude with. `canFallback` marks the
@@ -125,10 +125,11 @@ type Attempt =
 
 /**
  * A fix prompt is ~200 words; the ceiling exists so a runaway becomes a
- * failure, not a bill. Thinking is disabled outright (flash supports a zero
- * budget): the master prompt already pins the format, a thinking pass would
- * burn free-tier tokens before the first word, and with it off the ceiling
- * never competes with reasoning for output room.
+ * failure, not a bill. Thinking is disabled where the model speaks a zero
+ * budget (the 2.5 flash family — see requestConfigFor): the master prompt
+ * already pins the format, a thinking pass would burn free-tier tokens before
+ * the first word, and with it off the ceiling never competes with reasoning
+ * for output room.
  */
 const MAX_TOKENS = 1200
 
@@ -150,6 +151,17 @@ export function buildUserPrompt(finding: FixFinding): string {
   })
 }
 
+/**
+ * The 2.5 family takes an explicit zero thinking budget; the 3.x family
+ * rejects `thinkingBudget: 0` outright (INVALID_ARGUMENT — thinking there is
+ * graduated, not boolean), so the zero budget only goes to models that speak
+ * it. Omitting the config entirely on 3.x is the same "no thinking forced"
+ * stance: flash-lite defaults to minimal thinking anyway.
+ */
+function requestConfigFor(model: string): { thinkingConfig?: { thinkingBudget: number } } {
+  return model.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {}
+}
+
 async function attemptModel(model: string, finding: FixFinding): Promise<Attempt> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
@@ -165,7 +177,7 @@ async function attemptModel(model: string, finding: FixFinding): Promise<Attempt
         systemInstruction: MASTER_PROMPT,
         temperature: 0.2,
         maxOutputTokens: MAX_TOKENS,
-        thinkingConfig: { thinkingBudget: 0 },
+        ...requestConfigFor(model),
         abortSignal: controller.signal,
       },
     })

@@ -28,7 +28,7 @@ const finding: FixFinding = {
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models'
 const endpoint = (model: string) => `${GEMINI}/${model}:generateContent`
-const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const
+const MODELS = ['gemini-2.5-flash', 'gemini-3.5-flash-lite'] as const
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }))
 afterEach(() => {

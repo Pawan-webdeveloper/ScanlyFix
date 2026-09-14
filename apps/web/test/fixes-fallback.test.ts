@@ -24,7 +24,7 @@ const FINDING: FixFinding = {
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models'
 const endpoint = (model: string) => `${GEMINI}/${model}:generateContent`
 const PRIMARY = 'gemini-2.5-flash'
-const FALLBACK = 'gemini-2.5-flash-lite'
+const FALLBACK = 'gemini-3.5-flash-lite'
 
 const okBody = (prompt: string) => ({
   candidates: [{ content: { parts: [{ text: prompt }] }, finishReason: 'STOP' }],
