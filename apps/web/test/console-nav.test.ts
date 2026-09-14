@@ -28,6 +28,7 @@ const REAL_ROUTES = new Set([
   '/monitors',
   '/monitoring',
   '/runtime',
+  '/threats',
 ])
 
 describe('console nav', () => {

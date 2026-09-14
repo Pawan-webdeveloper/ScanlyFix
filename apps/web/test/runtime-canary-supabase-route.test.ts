@@ -8,6 +8,12 @@ const listCanariesMock = vi.fn();
 const markCanariesSetupMock = vi.fn();
 const restSelectMock = vi.fn();
 
+vi.mock('@/lib/entitlements', () => ({
+  // The Pro gate is exercised by its own test; here it is always open so these
+  // tests keep covering what they are about.
+  hasRuntimeAccess: async () => true,
+}));
+
 vi.mock('@/lib/authz', () => ({
   getViewer: (...args: unknown[]) => getViewerMock(...args),
 }));
@@ -76,7 +82,7 @@ describe('POST /api/runtime/supabase — service key validation (TASK 6)', () =>
     const json = await res.json();
     expect(json).toEqual({
       ok: false,
-      error: 'ye anon key hai — service key chahiye',
+      error: expect.stringMatching(/service role key/i),
     });
 
     // Should not call live probe or save

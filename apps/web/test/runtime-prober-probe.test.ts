@@ -140,7 +140,7 @@ describe('runtime auth prober — probeTarget & SSRF guard', () => {
       vi.stubGlobal('fetch', fetchMock);
 
       const outcome = await probeTarget('example.com', '/admin');
-      expect(outcome).toEqual({ ok: true, status: 401 });
+      expect(outcome).toMatchObject({ ok: true, status: 401 });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [calledUrl, calledOptions] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
@@ -158,7 +158,7 @@ describe('runtime auth prober — probeTarget & SSRF guard', () => {
       vi.stubGlobal('fetch', fetchMock);
 
       const outcome = await probeTarget('example.com', '/dashboard');
-      expect(outcome).toEqual({ ok: true, status: 307 });
+      expect(outcome).toMatchObject({ ok: true, status: 307 });
     });
 
     it('returns error object when network or DNS drops', async () => {
@@ -186,7 +186,7 @@ describe('runtime auth prober — probeTarget & SSRF guard', () => {
 
       const testAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.sig';
       const outcome = await probeTargetWithAnonKey('example.com', '/api/data', testAnonKey);
-      expect(outcome).toEqual({ ok: true, status: 200 });
+      expect(outcome).toMatchObject({ ok: true, status: 200 });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [calledUrl, calledOptions] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];

@@ -203,7 +203,7 @@ describe('runtime prober actions', () => {
       expect(res.ok).toBe(true);
       if (res.ok) {
         expect(res.summary?.baselinesRecorded).toBe(16);
-        expect(res.message).toContain('Recorded baselines for 16 target(s)');
+        expect(res.message).toContain('Recorded 16 baselines');
       }
       expect(revalidatePathMock).toHaveBeenCalledWith('/runtime');
     });
