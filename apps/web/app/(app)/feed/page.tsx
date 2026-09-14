@@ -25,6 +25,7 @@ import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 import { RepoScanButton } from '@/components/console/repo-scan-button.tsx'
 import { SupabaseConnections } from '@/components/console/supabase-connections.tsx'
+import { ConnectAppsHub } from '@/components/console/connect-apps.tsx'
 
 export const metadata = { title: 'Feed' }
 
@@ -126,6 +127,15 @@ export default async function FeedPage({
             {errorMessage}
           </div>
         )}
+
+        {/*
+         * The connection hub: every connectable app in one grid, in the order
+         * the dashboard's bottom section repeats (GitHub first, Supabase
+         * second, then the rest). It sits above the per-provider sections so a
+         * person new to the account sees the whole model before its parts —
+         * and each card's CTA anchors down to the section that owns its flow.
+         */}
+        <ConnectAppsHub installations={installations} connections={supabaseConnections} githubUrl={githubUrl} />
         {/* Connect GitHub CTA — shown when no installations exist.
             Above the fold on the account it is made for, so its entrance is
             CSS at first paint, not the scroll-watched island. */}
@@ -241,8 +251,9 @@ export default async function FeedPage({
           )}
         </section>
 
-        {/* Supabase connections — the Level-1 deep scan (publishable-key checks only) */}
-        <section data-reveal="">
+        {/* Supabase connections — the Level-1 deep scan (publishable-key checks only).
+            The #supabase anchor is the hub card's jump target. */}
+        <section id="supabase" data-reveal="" className="scroll-mt-20">
           <div data-reveal-item="" className="mb-4 flex items-end justify-between gap-4">
             <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-c-muted">
               Supabase projects
