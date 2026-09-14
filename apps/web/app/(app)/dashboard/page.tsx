@@ -44,6 +44,7 @@ import { NewProjectForm } from './new-project-form.tsx'
 import { PageHeader } from '@/components/console/page-header.tsx'
 import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
+import { ConnectApps } from '@/components/console/connect-apps.tsx'
 
 export const metadata = { title: 'Dashboard' }
 
@@ -221,6 +222,14 @@ export default async function DashboardPage() {
         <Sites projects={projects} orgId={user.orgId} />
 
         <Repositories repos={reposWithScans} />
+
+        {/*
+         * The inventory's inventory, and deliberately last: everything above
+         * is news, this is the reference shelf of what can be connected.
+         * GitHub's card goes straight to the install URL; every other flow
+         * lives on the Feed, so its card points there.
+         */}
+        <ConnectApps viewer={viewer} />
       </div>
     </div>
   )
