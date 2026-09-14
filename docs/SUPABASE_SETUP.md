@@ -50,15 +50,46 @@ and have to be registered in different places.
 
 In the Supabase dashboard: **Authentication → URL Configuration**.
 
-Add the app's own origin to "Additional Redirect URLs":
+### 3a. Set the Site URL (this is the localhost-redirect bug)
 
-| Environment | URL                                |
-| ----------- | ---------------------------------- |
-| Development | `http://localhost:3000/auth/callback` |
-| Production  | `https://your-domain.com/auth/callback` |
+The **Site URL** must be the production origin:
 
-Without this, `signInWithOAuth` succeeds at the provider but the browser gets
-a `redirect_uri_mismatch` error when it tries to land back at the app.
+| Field    | Value                  |
+| -------- | ---------------------- |
+| Site URL | `https://scanlyfix.com` |
+
+Supabase projects are provisioned with Site URL = `http://localhost:3000`. When
+the `redirectTo` the app sends does not match an entry in the redirect allow
+list below, Supabase Auth does NOT error — it **silently falls back to the Site
+URL**. With the default still in place that means: press "Continue with Google"
+on scanlyfix.com, complete Google's consent screen, and the browser lands on
+`http://localhost:3000/auth/callback` — a machine that has no flow in progress.
+This is the exact root cause of "Google sign-in redirects to localhost".
+
+### 3b. Add the redirect URLs to the allow list
+
+"Additional Redirect URLs" is matched with glob patterns against the FULL URL,
+including any query string. The app's `redirectTo` carries a `?next=…` query
+parameter whenever sign-in starts from a deep link (for example the hero form's
+`/login?next=/dashboard`), so a bare `/auth/callback` entry will NOT match it.
+End each entry with `**`:
+
+| Environment | URL                                        |
+| ----------- | ------------------------------------------ |
+| Production  | `https://scanlyfix.com/**`                 |
+| Production  | `https://www.scanlyfix.com/**`             |
+| Development | `http://localhost:3000/**`                 |
+
+Without a matching entry, `signInWithOAuth` succeeds at the provider but the
+browser is bounced to the Site URL (see 3a) instead of the app — which is why
+the `www` variant is listed too: a visitor on `https://www.scanlyfix.com` sends
+a `https://www.scanlyfix.com/auth/callback` redirectTo, and an allow list
+holding only the apex domain rejects it.
+
+The `SUPABASE_REDIRECT_ALLOWLIST` variable in the app's `.env` is only a local
+mirror of this dashboard list; the proxy logs a boot-time warning when the two
+diverge. Changing the env var alone fixes nothing — the dashboard is the
+boundary Supabase actually enforces.
 
 ## 4. Email-code sign-in (default)
 
