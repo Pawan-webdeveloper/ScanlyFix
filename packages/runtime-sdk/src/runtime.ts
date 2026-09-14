@@ -1,4 +1,6 @@
+import type { AiErrorKind } from './ai/error-kind.ts';
 import type { RouteEvent } from './guard/observe.ts';
+import type { ThreatEvent } from './threat/types.ts';
 
 export type AiCallEvent = {
   type: 'ai_call';
@@ -9,9 +11,16 @@ export type AiCallEvent = {
   latencyMs: number;
   costMicroUsd: number;
   userHash?: string;
+  /**
+   * Whether the call succeeded. Absent means 'ok' — older SDK builds only ever
+   * reported successes, so an absent field must not read as a failure.
+   */
+  status?: 'ok' | 'error';
+  /** A closed-set label, never the provider's message. See ai/error-kind.ts. */
+  errorKind?: AiErrorKind;
 };
 
-export type RuntimeEvent = RouteEvent | AiCallEvent;
+export type RuntimeEvent = RouteEvent | AiCallEvent | ThreatEvent;
 
 export interface RuntimeConfig {
   /** Project UUID. If omitted, ScanlyFix automatically identifies the project from x-runtime-host */

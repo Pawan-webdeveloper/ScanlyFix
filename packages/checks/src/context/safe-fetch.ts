@@ -35,6 +35,15 @@ export interface SafeFetchOptions {
   /** false → return the first response as-is, 3xx included (used by the http probe). */
   followRedirects?: boolean
   headers?: Record<string, string>
+  /**
+   * Request method. GET by default.
+   *
+   * HEAD exists for the uptime probe, where a customer monitoring a large page
+   * wants the status code without pulling the body every minute — theirs and
+   * ours. Nothing that needs the body may ask for it: a HEAD response has none,
+   * so a caller doing content inspection must send GET.
+   */
+  method?: 'GET' | 'HEAD'
 }
 
 export interface FetchedPage {
@@ -140,7 +149,7 @@ export async function safeFetch(target: URL | string, options: SafeFetchOptions 
     let response: Dispatcher.ResponseData
     try {
       response = await request(current, {
-        method: 'GET',
+        method: options.method ?? 'GET',
         dispatcher,
         signal,
         headers: {
