@@ -200,6 +200,14 @@ export const serverEnv = {
     return process.env.GITHUB_WEBHOOK_SECRET ?? ''
   },
   /**
+   * HMAC key for the install `state` parameter. Falls back to the webhook
+   * secret so an existing deploy does not need a second secret; set
+   * GITHUB_STATE_SECRET explicitly to keep the two purposes on different keys.
+   */
+  get githubStateSecret() {
+    return process.env.GITHUB_STATE_SECRET ?? process.env.GITHUB_WEBHOOK_SECRET ?? ''
+  },
+  /**
    * OAuth client secret for the GitHub App. Used when the App has its own
    * user-flow callback (the redirect we receive after install). Empty when
    * the App is configured webhook-only.

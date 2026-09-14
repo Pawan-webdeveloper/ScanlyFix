@@ -20,6 +20,7 @@ import {
 import { getViewer, requireUser } from '@/lib/authz.ts'
 import { serverEnv } from '@/lib/env.ts'
 import { buildInstallUrl, requestOrigin } from '@/lib/github-connect.ts'
+import { signInstallState } from '@/lib/github-state.ts'
 import { PageHeader } from '@/components/console/page-header.tsx'
 import { PageMotion } from '@/components/console/motion.tsx'
 import { Icon } from '@/components/console/icons.tsx'
@@ -81,6 +82,7 @@ export default async function FeedPage({
     ? buildInstallUrl(
         serverEnv.githubAppSlug,
         requestOrigin(await headers(), process.env['NEXT_PUBLIC_APP_URL'] ?? ''),
+        signInstallState(serverEnv.githubStateSecret, user.id),
       )
     : null
 

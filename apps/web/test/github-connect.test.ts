@@ -53,4 +53,10 @@ describe('buildInstallUrl', () => {
   it('without an origin, hands GitHub the bare install URL rather than a wrong redirect', () => {
     expect(buildInstallUrl('scanlyfix', '')).toBe('https://github.com/apps/scanlyfix/installations/new')
   })
+
+  it('round-trips a signed state param on the outer GitHub URL', () => {
+    const url = new URL(buildInstallUrl('scanlyfix', 'https://scanlyfix.com/', 'abc.def'))
+    expect(url.searchParams.get('state')).toBe('abc.def')
+    expect(url.searchParams.get('redirect_url')).toBe('https://scanlyfix.com/api/github/callback?next=%2Ffeed')
+  })
 })

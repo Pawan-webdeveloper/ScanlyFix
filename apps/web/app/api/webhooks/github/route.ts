@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server'
 import {
   deleteInstallationByGithubId,
+  deleteOtherReposForUser,
   deleteReposByGithubIds,
   getInstallationByGithubId,
+  listReposForViewer,
   upsertInstallation,
   upsertRepo,
   type Viewer,
 } from '@scanlyfix/db'
 import { listInstallationRepos, verifyWebhookSignature, type InstallationRepo } from '@/lib/github-app.ts'
+import { chooseConnectedRepo } from '@/lib/repo-cap.ts'
 import { getViewer } from '@/lib/authz.ts'
 import { serverEnv } from '@/lib/env.ts'
 
@@ -96,27 +99,36 @@ async function handleInstall(event: WebhookPayload): Promise<void> {
   })
   if (!upserted) return
 
-  let repos = installation.repositories ?? event.repositories ?? []
-  if (repos.length === 0) {
-    try {
-      repos = await listInstallationRepos(installation.id)
-    } catch (error) {
-      console.error('[webhooks/github] could not list installation repos', error)
-      return
-    }
+  /*
+   * Always list from GitHub rather than trusting the event payload: the
+   * repositories array on installation_repositories.added can be a partial
+   * list, and the one-repo cap decision below needs the complete granted set.
+   */
+  let repos: InstallationRepo[]
+  try {
+    repos = await listInstallationRepos(installation.id)
+  } catch (error) {
+    console.error('[webhooks/github] could not list installation repos', error)
+    return
   }
 
-  for (const repo of repos) {
-    await upsertRepo({
-      installationId: upserted.id,
-      owner: repo.owner.login,
-      name: repo.name,
-      fullName: repo.full_name,
-      defaultBranch: repo.default_branch,
-      private: repo.private,
-      githubId: repo.id,
-    })
-  }
+  // One repo per account, the same rule the GitHub callback applies.
+  const existing = await listReposForViewer(viewer)
+  const granted = repos.map((repo) => ({ ...repo, githubId: repo.id }))
+  const chosen = chooseConnectedRepo(existing, granted)
+  if (!chosen) return
+
+  const alreadyStored = existing.find((repo) => repo.githubId === chosen.repo.id)
+  const row = alreadyStored ?? (await upsertRepo({
+    installationId: upserted.id,
+    owner: chosen.repo.owner.login,
+    name: chosen.repo.name,
+    fullName: chosen.repo.full_name,
+    defaultBranch: chosen.repo.default_branch,
+    private: chosen.repo.private,
+    githubId: chosen.repo.id,
+  }))
+  if (row) await deleteOtherReposForUser(viewer, row.id)
 }
 
 async function handleDelete(event: WebhookPayload): Promise<void> {
