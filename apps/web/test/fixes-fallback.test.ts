@@ -1,11 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { http, HttpResponse } from 'msw'
+import { server } from './msw/server.ts'
 import { generateFix, type FixFinding } from '../lib/fixes.ts'
 
 /**
- * The fallback chain, against a stubbed OpenRouter: the failure modes that
- * used to dead-end the Fix button (one free model 5xx-ing or throttling) now
- * walk a discovered alternate list, while the failures no model can survive
- * (a rejected key) stop immediately.
+ * The fallback chain, against a mocked Gemini API: the failure modes that
+ * would dead-end the Fix button (the primary free model 5xx-ing or
+ * throttling) now fall through to the fixed free alternate, while the
+ * failures no model can survive (a rejected key) stop immediately.
  */
 
 const FINDING: FixFinding = {
@@ -19,132 +21,101 @@ const FINDING: FixFinding = {
   siteUrl: 'https://example.com',
 }
 
-const PRIMARY = 'nvidia/nemotron-3-ultra-550b-a55b:free'
+const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models'
+const endpoint = (model: string) => `${GEMINI}/${model}:generateContent`
+const PRIMARY = 'gemini-2.5-flash'
+const FALLBACK = 'gemini-2.5-flash-lite'
 
-function okBody(prompt: string) {
-  return {
-    choices: [{ message: { content: prompt }, finish_reason: 'stop' }],
-  }
-}
+const okBody = (prompt: string) => ({
+  candidates: [{ content: { parts: [{ text: prompt }] }, finishReason: 'STOP' }],
+})
 
-function completionResponse(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), { status })
-}
+beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }))
+afterEach(() => {
+  server.resetHandlers()
+  vi.unstubAllEnvs()
+})
+afterAll(() => server.close())
 
-const MODELS_LIST = {
-  data: [
-    { id: 'aaa/embed:free' },
-    { id: 'bbb/alpha-chat:free' },
-    { id: 'ccc/beta-chat:free' },
-    { id: PRIMARY },
-    { id: 'ddd/guard:free' },
-  ],
-}
-
-/** A fetch stub that answers the models GET and each completions POST in order. */
-function stubFetch(handlers: Array<(init: RequestInit | undefined, url: string) => Response>) {
-  const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = []
-  let step = 0
-  vi.stubGlobal(
-    'fetch',
-    vi.fn((url: string | URL, init?: RequestInit) => {
-      const urlText = String(url)
-      const handler = handlers[Math.min(step, handlers.length - 1)] ?? (() => new Response('unexpected', { status: 500 }))
-      step += 1
-      let body: unknown
-      try {
-        body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
-      } catch {
-        body = undefined
-      }
-      calls.push({ url: urlText, init, body })
-      return Promise.resolve(handler(init, urlText))
-    }),
-  )
-  return calls
+/** Handlers per model, in the order the chain walks them; tracks each attempt. */
+function chain(first: Parameters<typeof http.post>[1], second?: Parameters<typeof http.post>[1]) {
+  const attempted: string[] = []
+  const wrap =
+    (model: string, handler: Parameters<typeof http.post>[1]) =>
+    async (event: Parameters<Parameters<typeof http.post>[1]>[0]) => {
+      attempted.push(model)
+      return handler(event)
+    }
+  server.use(http.post(endpoint(PRIMARY), wrap(PRIMARY, first)))
+  if (second) server.use(http.post(endpoint(FALLBACK), wrap(FALLBACK, second)))
+  return attempted
 }
 
 beforeEach(() => {
-  process.env.OPENROUTER_API_KEY = 'test-key'
-  process.env.FIXES_MODEL = PRIMARY
-})
-
-afterEach(() => {
-  vi.unstubAllGlobals()
-  vi.restoreAllMocks()
+  vi.stubEnv('AUTOFIX_GEMINI_API', 'test-key')
+  vi.stubEnv('FIXES_MODEL', '')
 })
 
 describe('generateFix fallback chain', () => {
   it('returns unconfigured without touching the network when no key is set', async () => {
-    delete process.env.OPENROUTER_API_KEY
-    const calls = stubFetch([])
+    vi.stubEnv('AUTOFIX_GEMINI_API', '')
+    let called = false
+    server.use(
+      http.post(endpoint(PRIMARY), () => {
+        called = true
+        return HttpResponse.json(okBody('x'))
+      }),
+    )
     const result = await generateFix(FINDING)
     expect(result).toEqual({ ok: false, reason: 'unconfigured' })
-    expect(calls).toHaveLength(0)
+    expect(called).toBe(false)
   })
 
-  it('falls back to a discovered live model when the configured one 5xxes', async () => {
-    const calls = stubFetch([
-      () => completionResponse(500, { error: 'upstream down' }), // primary completion
-      () => completionResponse(200, MODELS_LIST), // model discovery
-      () => completionResponse(200, okBody('Add the rua= tag to the DMARC record.')), // bbb succeeds
-    ])
+  it('falls back to the free alternate when the primary 5xxes', async () => {
+    const attempted = chain(
+      () => new HttpResponse(null, { status: 500 }),
+      () => HttpResponse.json(okBody('Add the rua= tag to the DMARC record.')),
+    )
     const result = await generateFix(FINDING)
     expect(result).toEqual({ ok: true, prompt: 'Add the rua= tag to the DMARC record.' })
-    // completions(primary) -> models -> completions(bbb): the embed and guard
-    // ids must never be chosen as fallbacks.
-    const attemptedModels = calls
-      .filter((call) => call.url.includes('/chat/completions'))
-      .map((call) => (call.body as { model: string }).model)
-    expect(attemptedModels).toEqual([PRIMARY, 'bbb/alpha-chat:free'])
+    expect(attempted).toEqual([PRIMARY, FALLBACK])
   })
 
-  it('falls back when the free tier throttles the configured model', async () => {
-    const calls = stubFetch([
-      () => completionResponse(429, { error: 'rate limited' }),
-      () => completionResponse(200, MODELS_LIST),
-      () => completionResponse(200, okBody('Rotate the leaked credential first.')),
-    ])
+  it('falls back when the free tier throttles the primary', async () => {
+    const attempted = chain(
+      () => new HttpResponse(null, { status: 429 }),
+      () => HttpResponse.json(okBody('Rotate the leaked credential first.')),
+    )
     const result = await generateFix(FINDING)
     expect(result).toEqual({ ok: true, prompt: 'Rotate the leaked credential first.' })
-    expect(calls.filter((call) => call.url.includes('/chat/completions'))).toHaveLength(2)
+    expect(attempted).toEqual([PRIMARY, FALLBACK])
   })
 
   it('stops immediately on a key-level refusal — no model can fix a rejected key', async () => {
-    const calls = stubFetch([() => completionResponse(401, { error: 'invalid key' })])
+    const attempted = chain(() => new HttpResponse(null, { status: 401 }))
     const result = await generateFix(FINDING)
     expect(result).toEqual({ ok: false, reason: 'upstream' })
-    // One completions call, NO discovery call: fallback would multiply the wait.
-    expect(calls).toHaveLength(1)
+    // One call, NO fallback: retrying a rejected key just multiplies the wait.
+    expect(attempted).toEqual([PRIMARY])
   })
 
-  it('reports upstream after every discovered alternate also fails', async () => {
-    const calls = stubFetch([
-      () => completionResponse(500, {}),
-      () => completionResponse(200, MODELS_LIST),
-      () => completionResponse(500, {}),
-      () => completionResponse(500, {}),
-    ])
+  it('reports upstream after the fallback also fails', async () => {
+    const attempted = chain(
+      () => new HttpResponse(null, { status: 500 }),
+      () => new HttpResponse(null, { status: 500 }),
+    )
     const result = await generateFix(FINDING)
     expect(result).toEqual({ ok: false, reason: 'upstream' })
-    expect(calls.filter((call) => call.url.includes('/chat/completions'))).toHaveLength(3)
+    expect(attempted).toEqual([PRIMARY, FALLBACK])
   })
 
-  it('treats an empty completion (a reasoning model that ran out of tokens) as a fallback trigger', async () => {
-    const calls = stubFetch([
-      () => completionResponse(200, { choices: [{ message: { content: '' }, finish_reason: 'length' }] }),
-      () => completionResponse(200, MODELS_LIST),
-      () => completionResponse(200, okBody('Write the prompt again, shorter.')),
-    ])
+  it('treats an empty completion as a fallback trigger', async () => {
+    const attempted = chain(
+      () => HttpResponse.json({ candidates: [{ content: { parts: [{ text: '' }] } }] }),
+      () => HttpResponse.json(okBody('Write the prompt again, shorter.')),
+    )
     const result = await generateFix(FINDING)
     expect(result).toEqual({ ok: true, prompt: 'Write the prompt again, shorter.' })
-    expect(calls.filter((call) => call.url.includes('/chat/completions'))).toHaveLength(2)
-  })
-
-  it('sends enough completion tokens for a reasoning model to finish thinking', async () => {
-    const calls = stubFetch([() => completionResponse(200, okBody('Fine.'))])
-    await generateFix(FINDING)
-    const body = calls[0]?.body as { max_tokens: number }
-    expect(body.max_tokens).toBeGreaterThanOrEqual(1500)
+    expect(attempted).toEqual([PRIMARY, FALLBACK])
   })
 })

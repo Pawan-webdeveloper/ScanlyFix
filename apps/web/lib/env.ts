@@ -154,18 +154,18 @@ export const serverEnv = {
 
   /**
    * Fix prompts (lib/fixes.ts). One finding in, the prompt that fixes it out,
-   * written by a model through OpenRouter. Gated exactly like the repo
-   * scanner: a deployment with no key still works everywhere else, and the
-   * Fix button explains itself rather than throwing.
+   * written by Gemini's free tier. Gated exactly like the repo scanner: a
+   * deployment with no key still works everywhere else, and the Fix button
+   * explains itself rather than throwing.
    */
-  get openrouterApiKey() {
-    return process.env.OPENROUTER_API_KEY ?? ''
+  get autofixGeminiApiKey() {
+    return process.env.AUTOFIX_GEMINI_API ?? ''
   },
   get fixesModel() {
     return process.env.FIXES_MODEL ?? ''
   },
   get fixesConfigured() {
-    return Boolean(process.env.OPENROUTER_API_KEY)
+    return Boolean(process.env.AUTOFIX_GEMINI_API)
   },
 
   /**
