@@ -6,6 +6,7 @@ import { getRuntimeProjectContext, resolveFindingManually, getProject, getProjec
 import { requireUser } from '@/lib/authz';
 import { runAuthProber } from '@/lib/runtime/auth-prober';
 import { buildProberAlertEmail } from '@/lib/runtime/auth-prober/alert';
+import { describeRunSummary } from './prober-view';
 import { sendEmail } from '@/lib/email';
 
 export type ActionResult =
@@ -19,6 +20,8 @@ export type ActionResult =
         autoResolved: number;
         stillOpen: number;
         errors: number;
+        inconclusive?: number;
+        suppressedAlerts?: number;
       };
     }
   | { ok: false; error: string };
@@ -55,11 +58,10 @@ export async function runProberAction(projectId: string): Promise<ActionResult> 
         autoResolved: summary.autoResolved,
         stillOpen: summary.stillOpen,
         errors: summary.errors,
+        inconclusive: summary.inconclusive,
+        suppressedAlerts: summary.suppressedAlerts,
       },
-      message:
-        summary.baselinesRecorded > 0
-          ? `Recorded baselines for ${summary.baselinesRecorded} target(s).`
-          : `Probed ${summary.checked} target(s) (${summary.newFindings} new regressions, ${summary.errors} errors).`,
+      message: describeRunSummary(summary),
     };
   } catch (err) {
     console.error('[runProberAction] error:', err);

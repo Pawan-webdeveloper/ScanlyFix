@@ -1,5 +1,4 @@
 import {
-  countRecentHoneytokenHits,
   getProjectOwnerEmail,
   getRuntimeProjectContext,
 } from '@scanlyfix/db';
@@ -23,19 +22,11 @@ export const runtimeCanaryHoneytokenAlert = inngest.createFunction(
   async ({ event, step, logger }) => {
     const { projectId, canaryId, detail } = event.data;
 
-    // Rate-limit the email: max 1 email per honeytoken per hour.
-    const recentHits = await step.run('check-rate-limit', async () => {
-      return countRecentHoneytokenHits(canaryId, 60);
-    });
-
-    if (recentHits > 1) {
-      logger.info('honeytoken alert rate-limited (already alerted within 1 hour)', {
-        canaryId,
-        recentHits,
-      });
-      return { alerted: false, reason: 'rate_limited', recentHits };
-    }
-
+    // No rate limiting here. The route decides whether a hit deserves an email,
+    // because only the route can tell "first hit this hour" from "one of many":
+    // it holds the counts taken before its own row was written. This worker used
+    // to count hits afterwards, so its own hit inflated the count and two hits
+    // arriving together suppressed the alert completely.
     const [ownerEmail, ctx] = await Promise.all([
       getProjectOwnerEmail(projectId),
       getRuntimeProjectContext(projectId),

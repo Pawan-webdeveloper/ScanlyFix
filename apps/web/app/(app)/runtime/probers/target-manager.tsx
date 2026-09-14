@@ -4,9 +4,19 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { runtimeProberTargets } from '@scanlyfix/db';
 import { calculateBaselineAgeDays, detectFlappingPaths } from '@/lib/runtime/auth-prober/flap';
+import { verdictForTarget } from '@/lib/runtime/auth-prober/summary';
+import { CATEGORY_LABEL, categorizePath } from '@/lib/runtime/auth-prober/targets';
 import { addTargetAction, deleteTargetAction, rerecordBaselineAction } from './action';
 
 type ProberTarget = typeof runtimeProberTargets.$inferSelect;
+
+const VERDICT_STYLE: Record<string, { label: string; cls: string }> = {
+  protected: { label: 'protected', cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  open: { label: 'open', cls: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' },
+  exposed: { label: 'exposed', cls: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' },
+  inconclusive: { label: 'inconclusive', cls: 'bg-c-soft text-c-muted' },
+  baseline_recorded: { label: 'baseline', cls: 'bg-c-soft text-c-muted' },
+};
 
 export function TargetManager({
   projectId,
@@ -78,15 +88,15 @@ export function TargetManager({
       <div className="flex items-center justify-between text-xs text-c-muted">
         <span>
           Manual routes:{' '}
-          <span className={`font-medium ${isCapReached ? 'text-amber-600 dark:text-amber-400 font-semibold' : 'text-c-ink'}`}>
+          <span className={`font-medium ${isCapReached ? 'font-semibold text-amber-600 dark:text-amber-400' : 'text-c-ink'}`}>
             {manualCount}/25
           </span>
         </span>
-        <span className="text-[11px] text-c-muted font-mono">Method: GET</span>
+        <span className="font-mono text-[11px] text-c-muted">Method: GET · logged-out · no redirects followed</span>
       </div>
 
       {/* Add Custom Route Form */}
-      <form onSubmit={handleAdd} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+      <form onSubmit={handleAdd} className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <input
             type="text"
@@ -96,7 +106,7 @@ export function TargetManager({
             placeholder={
               isCapReached
                 ? 'Maximum limit of 25 manual targets reached'
-                : 'Add sensitive route to probe (e.g. /api/admin, /internal/keys)'
+                : 'Add a route to probe (e.g. /api/admin, /internal/keys, /api/orders/[id])'
             }
             className="w-full rounded-lg border border-c-line bg-c-soft px-3 py-1.5 font-mono text-xs text-c-ink shadow-sm focus:outline-none focus:ring-1 focus:ring-c-accent disabled:opacity-60"
           />
@@ -104,18 +114,14 @@ export function TargetManager({
         <button
           type="submit"
           disabled={pending || !newPath.trim() || isCapReached}
-          className="inline-flex h-8 items-center justify-center rounded-lg bg-c-accent px-3 text-xs font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 shrink-0"
+          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg bg-c-accent px-3 text-xs font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {pending ? 'Saving...' : '+ Add Route'}
         </button>
       </form>
 
       {msg && (
-        <p
-          className={`text-xs font-medium ${
-            msg.error ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
-          }`}
-        >
+        <p className={`text-xs font-medium ${msg.error ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
           {msg.text}
         </p>
       )}
@@ -125,7 +131,8 @@ export function TargetManager({
         <div className="rounded-lg border border-dashed border-c-line p-8 text-center">
           <p className="text-sm font-medium text-c-ink">No targets configured yet</p>
           <p className="mt-1 text-xs text-c-muted">
-            Click &ldquo;Seed default routes &amp; probe&rdquo; above to automatically monitor standard sensitive paths, or add a custom path above.
+            Click &ldquo;Seed default routes &amp; probe&rdquo; above to monitor admin panels, APIs, debug endpoints and logged-in
+            pages, or add a custom path above.
           </p>
         </div>
       ) : (
@@ -134,23 +141,23 @@ export function TargetManager({
             <thead>
               <tr className="border-b border-c-line text-xs font-medium uppercase tracking-wider text-c-muted">
                 <th className="py-3 pr-4">Path</th>
-                <th className="px-4 py-3">Method</th>
+                <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Baseline</th>
-                <th className="px-4 py-3">Baseline Age</th>
-                <th className="px-4 py-3">Latest Status</th>
+                <th className="px-4 py-3">Age</th>
+                <th className="px-4 py-3">Latest</th>
+                <th className="px-4 py-3">Verdict</th>
                 <th className="px-4 py-3">Source</th>
                 <th className="py-3 pl-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-c-line">
               {targets.map((t) => {
-                const isOk =
-                  t.baselineStatus !== null &&
-                  t.lastActualStatus !== null &&
-                  t.lastActualStatus === t.baselineStatus;
+                const verdict = verdictForTarget(t);
+                const style = verdict ? VERDICT_STYLE[verdict] : null;
                 const isUnstable = flapAnalysis.isUnstable(t.path);
                 const baselineAgeDays = calculateBaselineAgeDays(t.baselineAt);
                 const needsRerecord = baselineAgeDays !== null && baselineAgeDays > 180;
+                const category = categorizePath(t.path);
 
                 return (
                   <tr key={t.id} className="hover:bg-c-soft/50">
@@ -159,7 +166,7 @@ export function TargetManager({
                         <span>{t.path}</span>
                         {isUnstable && (
                           <span
-                            className="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                            className="rounded border border-amber-500/20 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400"
                             title="Flapping route: regressed 3 or more times in the last 30 days"
                           >
                             unstable
@@ -167,7 +174,7 @@ export function TargetManager({
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs text-c-muted">{t.method}</td>
+                    <td className="px-4 py-3 text-xs text-c-muted">{CATEGORY_LABEL[category]}</td>
                     <td className="px-4 py-3 text-xs">
                       {t.baselineStatus ? (
                         <span className="inline-flex items-center rounded bg-c-soft px-2 py-0.5 font-mono text-xs font-medium text-c-ink">
@@ -186,10 +193,10 @@ export function TargetManager({
                               type="button"
                               onClick={() => handleRerecord(t.id, t.path)}
                               disabled={pending}
-                              className="inline-flex items-center rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer"
+                              className="inline-flex cursor-pointer items-center rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
                               title={`Baseline is ${baselineAgeDays} days old (>180d). Click to re-record baseline.`}
                             >
-                              re-record baseline
+                              re-record
                             </button>
                           )}
                         </div>
@@ -199,13 +206,7 @@ export function TargetManager({
                     </td>
                     <td className="px-4 py-3 text-xs">
                       {t.lastActualStatus ? (
-                        <span
-                          className={`inline-flex items-center rounded px-2 py-0.5 font-mono text-xs font-medium ${
-                            isOk
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                          }`}
-                        >
+                        <span className="inline-flex items-center rounded bg-c-soft px-2 py-0.5 font-mono text-xs font-medium text-c-ink">
                           {t.lastActualStatus}
                         </span>
                       ) : (
@@ -213,15 +214,25 @@ export function TargetManager({
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      <span className="rounded bg-c-soft px-1.5 py-0.5 font-mono text-[10px] text-c-muted capitalize">
-                        {t.source}
-                      </span>
+                      {style ? (
+                        <span
+                          className={`inline-flex items-center rounded px-2 py-0.5 font-mono text-[11px] font-medium ${style.cls}`}
+                          title={t.lastReason ?? undefined}
+                        >
+                          {style.label}
+                        </span>
+                      ) : (
+                        <span className="text-c-muted">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <span className="rounded bg-c-soft px-1.5 py-0.5 font-mono text-[10px] capitalize text-c-muted">{t.source}</span>
                     </td>
                     <td className="py-3 pl-4 text-right">
                       <button
                         onClick={() => handleDelete(t.id, t.path)}
                         disabled={pending}
-                        className="text-xs text-c-muted hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                        className="text-xs text-c-muted transition-colors hover:text-rose-600 dark:hover:text-rose-400"
                         title="Delete target"
                       >
                         ✕

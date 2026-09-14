@@ -1,16 +1,27 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import type { AiErrorBreakdown, AiModelBreakdown, AiStats, AiUserBreakdown, HourlySpendBucket } from '@scanlyfix/db';
 
-import { setCeilingAction, sendSampleAiCallAction } from '@/app/(app)/runtime/ai/actions.ts';
-import { formatUsd, type AiSummary } from '@/lib/runtime/ai-log/summary.ts';
+import { clearCeilingAction, setCeilingAction } from '@/app/(app)/runtime/ai/actions.ts';
+import { formatUsd } from '@/lib/runtime/ai-log/summary.ts';
+import {
+  deriveAiStats,
+  describeErrors,
+  formatLatency,
+  formatTokens,
+  modelSharePct,
+  topUserSharePct,
+} from '@/lib/runtime/ai-log/stats.ts';
+import { MAX_CEILING_USD, MIN_CEILING_USD, suggestedCeilingUsd } from '@/lib/runtime/ai-spend/ceiling.ts';
 import { computeHourlyChartLayout } from '@/lib/runtime/ai-spend/chart.ts';
-import type { HourlySpendBucket } from '@scanlyfix/db';
+import type { VelocityVerdict } from '@/lib/runtime/ai-spend/velocity.ts';
+import { AiSetupCard } from './ai-setup.tsx';
 
-type Call = {
+export type AiCallRow = {
   id: string;
-  provider?: string;
+  provider?: string | null;
   model: string;
   promptTokens: number;
   completionTokens: number;
@@ -18,137 +29,107 @@ type Call = {
   costMicroUsd: number | null;
   userHash: string | null;
   source?: string | null;
-  createdAt: Date;
+  status?: string | null;
+  errorKind?: string | null;
+  createdAt: Date | string;
 };
 
-export function AiConsole(props: {
+export type AiConsoleProps = {
   projectId: string;
-  summary: AiSummary;
+  windowMinutes: number;
+  stats: AiStats;
+  byModel: AiModelBreakdown[];
+  byUser: AiUserBreakdown[];
+  errors: AiErrorBreakdown[];
   hourSpendMicroUsd: number;
   projectedHourMicroUsd: number;
-  last24hMicroUsd: number;
   ceilingMicroUsd: number | null;
-  calls: Call[];
-  hourlyBuckets?: HourlySpendBucket[];
-}) {
-  const { summary } = props;
-  const [showSetup, setShowSetup] = useState(props.calls.length === 0);
-  const pctOfCeiling =
-    props.ceilingMicroUsd && props.ceilingMicroUsd > 0
-      ? Math.min(100, Math.round((props.projectedHourMicroUsd / props.ceilingMicroUsd) * 100))
-      : null;
+  baselineMicroUsd: number | null;
+  verdict: VelocityVerdict;
+  calls: AiCallRow[];
+  hourlyBuckets: HourlySpendBucket[];
+};
 
-  const hasRecentSamples = props.calls.length > 0 && props.calls.slice(0, 5).some((c) => c.source === 'sample');
+export function AiConsole(props: AiConsoleProps) {
+  const derived = useMemo(() => deriveAiStats(props.stats), [props.stats]);
+  const topShare = useMemo(() => topUserSharePct(props.byUser), [props.byUser]);
+  const hasLiveTelemetry = props.stats.totalCalls > 0;
 
   return (
     <div className="space-y-6">
-      {/* ── SPEND HERO ── */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <SpendCard
-          label="This hour (live)"
-          value={formatUsd(props.hourSpendMicroUsd)}
-          sub={`Projection ${formatUsd(props.projectedHourMicroUsd)}/h${props.ceilingMicroUsd ? ` · Threshold ${formatUsd(props.ceilingMicroUsd)}` : ''}`}
-          pct={pctOfCeiling}
-          danger={pctOfCeiling !== null && pctOfCeiling >= 80}
-        />
-        <SpendCard
-          label="Last 24 hours"
-          value={formatUsd(props.last24hMicroUsd)}
-          sub={`${summary.totalCalls} total calls (${summary.totalTokensIn + summary.totalTokensOut} tokens)`}
-        />
-        <SpendCard
-          label="Top user share"
-          value={summary.topUserSharePct !== null ? `${summary.topUserSharePct}%` : '—'}
-          sub={summary.byUser[0] ? `${summary.byUser[0].userHash.slice(0, 10)}… (${summary.byUser[0].calls} calls)` : 'No user attribution yet'}
-          danger={summary.topUserSharePct !== null && summary.topUserSharePct >= 80}
-        />
-      </div>
+      <SpendHeader {...props} topShare={topShare} derived={derived} />
+      <CeilingPanel
+        projectId={props.projectId}
+        ceilingMicroUsd={props.ceilingMicroUsd}
+        baselineMicroUsd={props.baselineMicroUsd}
+      />
 
-      <CeilingBar projectId={props.projectId} ceilingMicroUsd={props.ceilingMicroUsd} />
+      {props.hourlyBuckets.length > 0 && <SpendHourlyChart buckets={props.hourlyBuckets} />}
 
-      {props.hourlyBuckets && props.hourlyBuckets.length > 0 && (
-        <SpendHourlyChart buckets={props.hourlyBuckets} />
-      )}
-
-      {/* ── CALL LOG ── */}
-      {props.calls.length === 0 ? (
-        <SetupCard projectId={props.projectId} />
-      ) : (
-        <div className="space-y-6">
-          <div className="overflow-hidden rounded-xl border border-c-line bg-c-card shadow-sm">
-            <div className="flex flex-col gap-2 border-b border-c-line px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold text-c-ink">Recent AI Calls ({props.calls.length})</h3>
-                  {hasRecentSamples && (
-                    <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                      sample data
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-c-muted">Latest calls observed via SDK wrappers — metadata only</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowSetup((v) => !v)}
-                  className="self-start rounded-lg border border-c-line bg-c-soft px-3 py-1.5 text-xs font-medium text-c-ink transition-colors hover:bg-c-line sm:self-auto"
-                >
-                  {showSetup ? 'Hide Integration Snippets' : 'View Integration Snippets'}
-                </button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-c-line bg-c-soft/60 text-xs uppercase tracking-wider text-c-muted">
-                    <th className="px-4 py-2.5">Time</th>
-                    <th className="px-4 py-2.5">Provider</th>
-                    <th className="px-4 py-2.5">Model</th>
-                    <th className="px-4 py-2.5">Tokens (In / Out)</th>
-                    <th className="px-4 py-2.5">Latency</th>
-                    <th className="px-4 py-2.5">Cost</th>
-                    <th className="px-4 py-2.5">User Hash</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-c-line">
-                  {props.calls.map((c) => (
-                    <tr key={c.id} className="transition-colors hover:bg-c-soft/40">
-                      <td className="whitespace-nowrap px-4 py-2.5 text-xs text-c-muted">
-                        {new Date(c.createdAt).toLocaleTimeString()}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs">
-                        <div className="flex items-center gap-1.5">
-                          <span className="inline-flex items-center rounded bg-c-soft px-2 py-0.5 font-medium capitalize text-c-ink">
-                            {c.provider || 'openai'}
-                          </span>
-                          {c.source === 'sample' && (
-                            <span className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                              sample
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-xs font-medium text-c-ink">{c.model}</td>
-                      <td className="px-4 py-2.5 text-xs text-c-ink">
-                        {c.promptTokens.toLocaleString()} / {c.completionTokens.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-c-muted">{c.latencyMs !== null ? `${c.latencyMs}ms` : '—'}</td>
-                      <td className="px-4 py-2.5 text-xs font-semibold text-c-ink">{formatUsd(c.costMicroUsd)}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-c-muted">
-                        {c.userHash ? `${c.userHash.slice(0, 10)}…` : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      {hasLiveTelemetry ? (
+        <>
+          <MetricStrip derived={derived} windowMinutes={props.windowMinutes} />
+          {props.errors.length > 0 && <ErrorPanel errors={props.errors} totalCalls={derived.totalCalls} />}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <ModelTable byModel={props.byModel} />
+            <UserTable byUser={props.byUser} topShare={topShare} />
           </div>
-
-          {showSetup && <SetupCard projectId={props.projectId} hasCalls={props.calls.length > 0} />}
-        </div>
+          <CallLog calls={props.calls} />
+          <details className="rounded-xl border border-c-line bg-c-card p-5 shadow-sm">
+            <summary className="cursor-pointer text-sm font-medium text-c-ink">Integration snippets &amp; sample data</summary>
+            <div className="mt-4">
+              <AiSetupCard projectId={props.projectId} hasCalls />
+            </div>
+          </details>
+        </>
+      ) : (
+        <AiSetupCard projectId={props.projectId} />
       )}
+    </div>
+  );
+}
+
+/* ── Spend hero ─────────────────────────────────────────────────────────── */
+
+function SpendHeader(props: AiConsoleProps & { topShare: number | null; derived: ReturnType<typeof deriveAiStats> }) {
+  const { verdict } = props;
+  const pct = verdict.pctOfCeiling;
+  const isCritical = verdict.severity === 'critical';
+  const isAlerting = verdict.shouldAlert;
+
+  const projectionSub =
+    verdict.reason === 'baseline_spike' && verdict.baselineMultiple !== null
+      ? `${verdict.baselineMultiple}× this project's normal ${formatUsd(props.baselineMicroUsd)}/h`
+      : props.ceilingMicroUsd
+        ? `Projection ${formatUsd(props.projectedHourMicroUsd)}/h · ceiling ${formatUsd(props.ceilingMicroUsd)}/h`
+        : props.baselineMicroUsd
+          ? `Projection ${formatUsd(props.projectedHourMicroUsd)}/h · normal ${formatUsd(props.baselineMicroUsd)}/h`
+          : `Projection ${formatUsd(props.projectedHourMicroUsd)}/h`;
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-3">
+      <SpendCard
+        label="This hour (live)"
+        value={formatUsd(props.hourSpendMicroUsd)}
+        sub={projectionSub}
+        pct={pct !== null ? Math.min(100, pct) : null}
+        tone={isAlerting ? (isCritical ? 'bad' : 'warn') : 'default'}
+      />
+      <SpendCard
+        label={`Last ${Math.round(props.windowMinutes / 60)}h`}
+        value={formatUsd(props.stats.totalCostMicroUsd)}
+        sub={`${props.derived.totalCalls.toLocaleString()} calls · ${formatTokens(props.derived.totalTokens)} tokens`}
+      />
+      <SpendCard
+        label="Top caller share"
+        value={props.topShare !== null ? `${props.topShare}%` : '—'}
+        sub={
+          props.byUser[0]?.userHash
+            ? `${props.byUser[0].userHash.slice(0, 12)}… · ${props.byUser[0].calls} calls`
+            : 'No user attribution — pass getUserId to the wrapper'
+        }
+        tone={props.topShare !== null && props.topShare >= 80 ? 'warn' : 'default'}
+      />
     </div>
   );
 }
@@ -158,124 +139,343 @@ function SpendCard({
   value,
   sub,
   pct,
-  danger,
+  tone = 'default',
 }: {
   label: string;
   value: string;
   sub?: string;
   pct?: number | null;
-  danger?: boolean;
+  tone?: 'default' | 'warn' | 'bad';
 }) {
+  const border =
+    tone === 'bad' ? 'border-rose-500/40 bg-rose-500/5' : tone === 'warn' ? 'border-amber-500/40 bg-amber-500/5' : 'border-c-line bg-c-card';
+  const text =
+    tone === 'bad' ? 'text-rose-600 dark:text-rose-400' : tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-c-ink';
+  const bar = tone === 'bad' ? 'bg-rose-500' : tone === 'warn' ? 'bg-amber-500' : 'bg-c-accent';
+
   return (
-    <div
-      className={`rounded-xl border p-5 shadow-sm transition-colors ${
-        danger ? 'border-red-500/40 bg-red-500/5' : 'border-c-line bg-c-card'
-      }`}
-    >
+    <div className={`rounded-xl border p-5 shadow-sm transition-colors ${border}`}>
       <p className="text-xs font-medium uppercase tracking-wider text-c-muted">{label}</p>
-      <p className={`mt-2 text-2xl font-bold ${danger ? 'text-red-600 dark:text-red-400' : 'text-c-ink'}`}>{value}</p>
+      <p className={`mt-2 text-2xl font-bold ${text}`}>{value}</p>
       {sub && <p className="mt-1 text-xs text-c-muted">{sub}</p>}
       {pct !== null && pct !== undefined && (
         <div className="mt-3 h-1.5 overflow-hidden rounded bg-c-soft">
-          <div
-            className={`h-full rounded transition-all ${danger ? 'bg-red-500' : 'bg-c-accent'}`}
-            style={{ width: `${pct}%` }}
-          />
+          <div className={`h-full rounded transition-all ${bar}`} style={{ width: `${pct}%` }} />
         </div>
       )}
     </div>
   );
 }
 
-function CeilingBar({ projectId, ceilingMicroUsd }: { projectId: string; ceilingMicroUsd: number | null }) {
+/* ── Secondary metrics ──────────────────────────────────────────────────── */
+
+function MetricStrip({ derived, windowMinutes }: { derived: ReturnType<typeof deriveAiStats>; windowMinutes: number }) {
+  const hours = Math.round(windowMinutes / 60);
+  const tiles: Array<{ label: string; value: string; hint: string; tone?: 'warn' | 'bad' }> = [
+    { label: 'Error rate', value: `${derived.errorRatePct}%`, hint: `${derived.errorCalls} of ${derived.totalCalls} calls failed`, ...(derived.errorRatePct >= 20 ? { tone: 'bad' as const } : derived.errorRatePct >= 5 ? { tone: 'warn' as const } : {}) },
+    { label: 'Cost / call', value: formatUsd(derived.avgCostPerCallMicroUsd), hint: 'Mean over successful calls' },
+    { label: 'Tokens / call', value: formatTokens(derived.avgTokensPerCall), hint: 'Prompt plus completion' },
+    { label: 'Latency p50', value: formatLatency(derived.p50LatencyMs), hint: 'Successful calls only' },
+    { label: 'Latency p95', value: formatLatency(derived.p95LatencyMs), hint: 'The slow tail your users feel' },
+    { label: 'Callers', value: derived.distinctUsers > 0 ? String(derived.distinctUsers) : '—', hint: `Distinct attributed users in ${hours}h` },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {tiles.map((t) => (
+        <div key={t.label} className="rounded-xl border border-c-line bg-c-card px-4 py-3 shadow-sm" title={t.hint}>
+          <p className="text-[11px] font-medium uppercase tracking-wider text-c-muted">{t.label}</p>
+          <p
+            className={`mt-1 font-mono text-lg font-semibold ${
+              t.tone === 'bad' ? 'text-rose-600 dark:text-rose-400' : t.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-c-ink'
+            }`}
+          >
+            {t.value}
+          </p>
+          <p className="mt-0.5 line-clamp-2 text-[10px] leading-tight text-c-muted">{t.hint}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ErrorPanel({ errors, totalCalls }: { errors: AiErrorBreakdown[]; totalCalls: number }) {
+  const described = useMemo(() => describeErrors(errors), [errors]);
+  return (
+    <section className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-5">
+      <h3 className="text-sm font-semibold text-c-ink">Failed calls</h3>
+      <p className="mt-0.5 text-xs text-c-muted">
+        Failures are recorded at zero cost and zero tokens — a rejected request was never billed.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {described.map((e) => (
+          <li key={e.errorKind} className="flex flex-col gap-0.5 border-t border-c-line/60 pt-2 first:border-0 first:pt-0">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-xs font-medium text-c-ink">{e.label}</span>
+              <span className="shrink-0 font-mono text-xs text-c-muted">
+                {e.calls} {totalCalls > 0 && <span className="text-[10px]">({Math.round((e.calls / totalCalls) * 100)}%)</span>}
+              </span>
+            </div>
+            <span className="text-[11px] leading-relaxed text-c-muted">{e.hint}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/* ── Breakdowns ─────────────────────────────────────────────────────────── */
+
+function ModelTable({ byModel }: { byModel: AiModelBreakdown[] }) {
+  if (byModel.length === 0) return null;
+  return (
+    <section className="overflow-hidden rounded-xl border border-c-line bg-c-card shadow-sm">
+      <div className="border-b border-c-line px-5 py-3">
+        <h3 className="text-sm font-semibold text-c-ink">Spend by model</h3>
+        <p className="text-xs text-c-muted">Where the bill actually comes from</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-c-line bg-c-soft/60 text-[11px] uppercase tracking-wider text-c-muted">
+              <th className="px-4 py-2.5">Model</th>
+              <th className="px-4 py-2.5">Cost</th>
+              <th className="px-4 py-2.5">Calls</th>
+              <th className="px-4 py-2.5">Tokens</th>
+              <th className="px-4 py-2.5">p50</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-c-line">
+            {byModel.map((m) => {
+              const share = modelSharePct(m, byModel);
+              return (
+                <tr key={`${m.provider}:${m.model}`} className="hover:bg-c-soft/40">
+                  <td className="px-4 py-2.5">
+                    <p className="font-mono text-xs font-medium text-c-ink">{m.model}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-1 w-16 overflow-hidden rounded-full bg-c-soft" aria-hidden>
+                        <div className="h-full rounded-full bg-c-accent" style={{ width: `${share}%` }} />
+                      </div>
+                      <span className="text-[10px] text-c-muted">{share}% of spend</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs font-semibold text-c-ink">{formatUsd(m.costMicroUsd)}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-c-muted">
+                    {m.calls.toLocaleString()}
+                    {m.errors > 0 && <span className="ml-1 text-rose-600 dark:text-rose-400">({m.errors} failed)</span>}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-c-muted">
+                    {formatTokens(m.promptTokens + m.completionTokens)}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-c-muted">{formatLatency(m.p50LatencyMs)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function UserTable({ byUser, topShare }: { byUser: AiUserBreakdown[]; topShare: number | null }) {
+  const attributed = byUser.filter((u) => u.userHash !== null);
+
+  if (attributed.length === 0) {
+    return (
+      <section className="rounded-xl border border-c-line bg-c-card p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-c-ink">Spend by caller</h3>
+        <p className="mt-2 text-xs leading-relaxed text-c-muted">
+          No attribution yet. Pass <code className="rounded bg-c-soft px-1 font-mono text-[11px]">getUserId</code> to the wrapper and
+          Guard will hash it one-way on your server — the raw id never leaves your process. Without it, a runaway loop cannot be
+          traced to the job or user causing it.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-c-line bg-c-card shadow-sm">
+      <div className="border-b border-c-line px-5 py-3">
+        <h3 className="text-sm font-semibold text-c-ink">Spend by caller</h3>
+        <p className="text-xs text-c-muted">
+          {topShare !== null && topShare >= 80
+            ? 'One caller holds most of this spend — the usual signature of a retry loop.'
+            : 'One-way hashes; raw ids never leave your process'}
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-c-line bg-c-soft/60 text-[11px] uppercase tracking-wider text-c-muted">
+              <th className="px-4 py-2.5">Caller</th>
+              <th className="px-4 py-2.5">Cost</th>
+              <th className="px-4 py-2.5">Calls</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-c-line">
+            {attributed.map((u) => (
+              <tr key={u.userHash} className="hover:bg-c-soft/40">
+                <td className="px-4 py-2.5 font-mono text-xs text-c-ink">{u.userHash?.slice(0, 16)}…</td>
+                <td className="px-4 py-2.5 font-mono text-xs font-semibold text-c-ink">{formatUsd(u.costMicroUsd)}</td>
+                <td className="px-4 py-2.5 font-mono text-xs text-c-muted">
+                  {u.calls.toLocaleString()}
+                  {u.errors > 0 && <span className="ml-1 text-rose-600 dark:text-rose-400">({u.errors} failed)</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/* ── Ceiling ────────────────────────────────────────────────────────────── */
+
+function CeilingPanel({
+  projectId,
+  ceilingMicroUsd,
+  baselineMicroUsd,
+}: {
+  projectId: string;
+  ceilingMicroUsd: number | null;
+  baselineMicroUsd: number | null;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; error?: boolean } | null>(null);
 
   function save(form: FormData) {
     const usd = Number(form.get('ceiling'));
+    setMsg(null);
     startTransition(async () => {
       const res = await setCeilingAction(projectId, usd);
-      if (res.ok) {
-        setMsg(`Threshold saved: $${usd}/hour`);
-        router.refresh();
-      } else {
-        setMsg(res.error);
-      }
+      setMsg(res.ok ? { text: res.message ?? 'Saved.' } : { text: res.error, error: true });
+      if (res.ok) router.refresh();
     });
   }
+
+  function clear() {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await clearCeilingAction(projectId);
+      setMsg(res.ok ? { text: res.message ?? 'Cleared.' } : { text: res.error, error: true });
+      if (res.ok) router.refresh();
+    });
+  }
+
+  const suggested = suggestedCeilingUsd(baselineMicroUsd);
 
   return (
     <div className="rounded-xl border border-c-line bg-c-card p-5 shadow-sm">
       <div className="flex flex-wrap items-center gap-3">
-        <p className="text-sm font-semibold text-c-ink">Spend Alert Threshold:</p>
+        <p className="text-sm font-semibold text-c-ink">Hourly spend ceiling</p>
         <form action={save} className="flex items-center gap-2">
+          <span className="text-sm text-c-muted">$</span>
           <input
             name="ceiling"
             type="number"
             step="0.5"
-            min="0.5"
-            defaultValue={ceilingMicroUsd ? ceilingMicroUsd / 1e6 : 5}
-            className="w-24 rounded-lg border border-c-line bg-c-soft px-2.5 py-1.5 text-sm text-c-ink shadow-sm focus:outline-none"
+            min={MIN_CEILING_USD}
+            max={MAX_CEILING_USD}
+            aria-label="Hourly spend ceiling in USD"
+            defaultValue={ceilingMicroUsd ? ceilingMicroUsd / 1e6 : suggested}
+            className="w-24 rounded-lg border border-c-line bg-c-soft px-2.5 py-1.5 text-sm text-c-ink shadow-sm focus:outline-none focus:ring-1 focus:ring-c-accent"
           />
-          <span className="text-sm text-c-muted">USD / hour</span>
+          <span className="text-sm text-c-muted">/ hour</span>
           <button
             disabled={pending}
             className="rounded-lg bg-c-accent px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {pending ? 'Saving...' : 'Save'}
+            {pending ? 'Saving…' : 'Save'}
           </button>
         </form>
-        {msg && <span className="text-xs font-medium text-c-muted">{msg}</span>}
+        {ceilingMicroUsd !== null && (
+          <button
+            type="button"
+            onClick={clear}
+            disabled={pending}
+            className="rounded-lg border border-c-line bg-c-card px-3 py-1.5 text-xs font-medium text-c-muted transition-colors hover:bg-c-soft hover:text-c-ink disabled:opacity-50"
+          >
+            Remove
+          </button>
+        )}
+        {msg && (
+          <span className={`text-xs font-medium ${msg.error ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+            {msg.text}
+          </span>
+        )}
       </div>
+
       <ul className="mt-3 space-y-1.5 border-t border-c-line pt-3 text-xs text-c-muted">
-        <li className="flex items-center gap-2">
-          <span className="text-emerald-500">✓</span>
+        <li className="flex items-start gap-2">
+          <span className="mt-0.5 text-emerald-500">✓</span>
           <span>
-            <strong className="text-c-ink">Proactive spend protection:</strong> Wrapped calls refuse execution BEFORE reaching provider API if projected spend crosses the ceiling (SpendCeilingError).
+            <strong className="text-c-ink">Refused before the provider.</strong> The SDK firewall reserves each call&rsquo;s
+            projected cost first; crossing the ceiling throws <code className="font-mono text-[11px]">SpendCeilingError</code> and
+            the request is never sent. No money is spent.
           </span>
         </li>
-        <li className="flex items-center gap-2">
-          <span className="text-emerald-500">✓</span>
+        <li className="flex items-start gap-2">
+          <span className="mt-0.5 text-emerald-500">✓</span>
           <span>
-            <strong className="text-c-ink">Live velocity alerts:</strong> Inngest worker checks 15-minute windows and alerts if current spend velocity is projected to breach the threshold.
+            <strong className="text-c-ink">Live, without a redeploy.</strong> The firewall re-reads this value every five minutes.
           </span>
         </li>
-        <li className="flex items-center gap-2">
-          <span className="text-c-muted">ℹ</span>
-          <span>Metadata-only observation: prompt content and sensitive parameters never leave your infrastructure.</span>
+        <li className="flex items-start gap-2">
+          <span className="mt-0.5 text-c-muted">ℹ</span>
+          <span>
+            {ceilingMicroUsd === null ? (
+              baselineMicroUsd ? (
+                <>
+                  No ceiling set. Alerts compare against this project&rsquo;s own normal of{' '}
+                  <strong className="text-c-ink">{formatUsd(baselineMicroUsd)}/hour</strong> and fire on a sustained multiple of it.
+                </>
+              ) : (
+                <>No ceiling set, and not enough history yet for a baseline. Alerts fall back to a flat $10/hour guard.</>
+              )
+            ) : (
+              <>Warning at 80% of the ceiling, once per hour at most.</>
+            )}
+          </span>
         </li>
       </ul>
     </div>
   );
 }
 
+/* ── Chart ──────────────────────────────────────────────────────────────── */
+
 export function SpendHourlyChart({ buckets }: { buckets: HourlySpendBucket[] }) {
-  const layout = computeHourlyChartLayout(buckets);
+  const layout = useMemo(() => computeHourlyChartLayout(buckets), [buckets]);
 
   return (
     <div className="rounded-xl border border-c-line bg-c-card p-5 shadow-sm">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-c-ink">24-Hour Spend Activity</h3>
-          <p className="text-xs text-c-muted">Hourly spend trajectory over the last 24 hours</p>
+          <h3 className="text-sm font-semibold text-c-ink">24-hour spend</h3>
+          <p className="text-xs text-c-muted">Hourly, UTC</p>
         </div>
         <div className="flex items-center gap-4 text-xs">
           <div>
-            <span className="text-c-muted">Total 24h: </span>
+            <span className="text-c-muted">Total: </span>
             <span className="font-semibold text-c-ink">{formatUsd(layout.total24h)}</span>
           </div>
           <div>
             <span className="text-c-muted">Calls: </span>
             <span className="font-semibold text-c-ink">{layout.totalCalls.toLocaleString()}</span>
           </div>
+          <div>
+            <span className="text-c-muted">Peak hour: </span>
+            <span className="font-semibold text-c-ink">{formatUsd(layout.maxCost)}</span>
+          </div>
         </div>
       </div>
 
       <div className="mt-4 overflow-x-auto">
         <div className="min-w-[550px]">
-          <svg viewBox={`0 0 ${layout.totalWidth} ${layout.height}`} className="w-full h-28 overflow-visible">
-            {/* Horizontal baseline */}
+          <svg viewBox={`0 0 ${layout.totalWidth} ${layout.height}`} className="h-28 w-full overflow-visible" role="img" aria-label="Hourly AI spend over the last 24 hours">
             <line
               x1="0"
               y1={layout.height - 20}
@@ -285,34 +485,23 @@ export function SpendHourlyChart({ buckets }: { buckets: HourlySpendBucket[] }) 
               strokeDasharray="2,2"
               strokeWidth="1"
             />
-
-            {/* 24 Hourly bars */}
             {layout.bars.map((bar) => (
-              <g key={bar.hour} className="group cursor-pointer">
-                {/* Bar */}
+              <g key={bar.hour} className="group">
                 <rect
                   x={bar.x}
                   y={bar.y}
                   width={bar.width}
                   height={bar.height}
                   rx="3"
-                  className={`transition-all duration-200 ${
-                    bar.isZero
-                      ? 'fill-c-line/40 hover:fill-c-line'
-                      : 'fill-c-accent hover:opacity-80'
-                  }`}
+                  className={`transition-all duration-200 ${bar.isZero ? 'fill-c-line/40' : 'fill-c-accent hover:opacity-80'}`}
                 />
-
-                {/* Tooltip on hover */}
                 <title>{bar.tooltip}</title>
-
-                {/* X-axis time label every 4 hours */}
                 {bar.showLabel && (
                   <text
                     x={bar.x + bar.width / 2}
                     y={layout.height - 4}
                     textAnchor="middle"
-                    className="fill-c-muted text-[10px] font-mono select-none"
+                    className="select-none fill-c-muted font-mono text-[10px]"
                   >
                     {bar.displayHour}
                   </text>
@@ -326,184 +515,96 @@ export function SpendHourlyChart({ buckets }: { buckets: HourlySpendBucket[] }) 
   );
 }
 
-function SetupCard({ projectId, hasCalls = false }: { projectId: string; hasCalls?: boolean }) {
-  const [tab, setTab] = useState<'openai' | 'anthropic'>('openai');
-  const [origin, setOrigin] = useState('https://scanlyfix.com');
-  const [sending, startTransition] = useTransition();
-  const [sentMsg, setSentMsg] = useState<string | null>(null);
-  const router = useRouter();
+/* ── Call log ───────────────────────────────────────────────────────────── */
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setOrigin(window.location.origin);
-    }
-  }, []);
-
-  const handleSendTest = () => {
-    setSentMsg(null);
-    startTransition(async () => {
-      const res = await sendSampleAiCallAction(projectId);
-      if (res.ok) {
-        setSentMsg('Test calls logged successfully!');
-        router.refresh();
-      } else {
-        setSentMsg(`Error: ${res.error}`);
-      }
-    });
-  };
-
-  const openAiSnippet = `import { createRuntime, wrapOpenAI, SpendFirewall, MemorySpendStore, createRemoteConfigFetcher } from '@scanlyfix/runtime-sdk';
-import OpenAI from 'openai';
-
-const runtime = createRuntime({
-  projectId: process.env.RUNTIME_PROJECT_ID!,
-  ingestUrl: process.env.RUNTIME_INGEST_URL ?? '${origin}/api/runtime/ingest',
-  signingSecret: process.env.RUNTIME_SIGNING_SECRET,
-});
-
-// Spend firewall with live dashboard-driven ceiling (refreshes every 5 mins):
-const firewall = new SpendFirewall({
-  projectId: process.env.RUNTIME_PROJECT_ID!,
-  store: new MemorySpendStore(), // Multi-instance? Use createUpstashStore(url, token)
-  configFetcher: createRemoteConfigFetcher({
-    configUrl: process.env.RUNTIME_CONFIG_URL ?? '${origin}/api/runtime/config',
-    projectId: process.env.RUNTIME_PROJECT_ID!,
-    signingSecret: process.env.RUNTIME_SIGNING_SECRET,
-  }),
-  // Optional local override: env var takes precedence if set
-  ceilingUsdPerHour: process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR
-    ? Number(process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR)
-    : undefined,
-});
-
-export const openai = wrapOpenAI(new OpenAI(), {
-  runtime,
-  firewall,
-  getUserId: () => session?.user?.id, // One-way hashed on your server — raw ID never transmitted
-});`;
-
-  const anthropicSnippet = `import { createRuntime, wrapAnthropic, SpendFirewall, MemorySpendStore, createRemoteConfigFetcher } from '@scanlyfix/runtime-sdk';
-import Anthropic from '@anthropic-ai/sdk';
-
-const runtime = createRuntime({
-  projectId: process.env.RUNTIME_PROJECT_ID!,
-  ingestUrl: process.env.RUNTIME_INGEST_URL ?? '${origin}/api/runtime/ingest',
-  signingSecret: process.env.RUNTIME_SIGNING_SECRET,
-});
-
-const firewall = new SpendFirewall({
-  projectId: process.env.RUNTIME_PROJECT_ID!,
-  store: new MemorySpendStore(),
-  configFetcher: createRemoteConfigFetcher({
-    configUrl: process.env.RUNTIME_CONFIG_URL ?? '${origin}/api/runtime/config',
-    projectId: process.env.RUNTIME_PROJECT_ID!,
-    signingSecret: process.env.RUNTIME_SIGNING_SECRET,
-  }),
-  ceilingUsdPerHour: process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR
-    ? Number(process.env.RUNTIME_SPEND_CEILING_USD_PER_HOUR)
-    : undefined,
-});
-
-export const anthropic = wrapAnthropic(new Anthropic(), {
-  runtime,
-  firewall,
-  getUserId: () => session?.user?.id,
-});`;
+function CallLog({ calls }: { calls: AiCallRow[] }) {
+  const [onlyErrors, setOnlyErrors] = useState(false);
+  const visible = useMemo(() => (onlyErrors ? calls.filter((c) => c.status === 'error') : calls), [calls, onlyErrors]);
+  const errorCount = useMemo(() => calls.filter((c) => c.status === 'error').length, [calls]);
+  const sampleCount = useMemo(() => calls.filter((c) => c.source === 'sample').length, [calls]);
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl border border-c-line bg-c-card p-6 shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              {!hasCalls && (
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
-                </span>
-              )}
-              <h3 className="text-base font-semibold text-c-ink">
-                {hasCalls ? 'SDK Integration Reference' : 'Awaiting First AI Call Telemetry'}
-              </h3>
-            </div>
-            <p className="mt-1 text-sm text-c-muted">
-              {hasCalls
-                ? 'Copy these code snippets into additional services or functions to observe and protect AI calls.'
-                : 'Attach the wrapper to your existing AI client in your application, or click "Send Test Event" to simulate calls and preview the live telemetry.'}
-            </p>
+    <div className="overflow-hidden rounded-xl border border-c-line bg-c-card shadow-sm">
+      <div className="flex flex-col gap-2 border-b border-c-line px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-c-ink">Recent calls</h3>
+            {sampleCount > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                {sampleCount} sample
+              </span>
+            )}
           </div>
-
-          <div className="flex flex-col items-start sm:items-end gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={handleSendTest}
-              disabled={sending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-c-accent px-4 py-2 text-xs font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {sending ? 'Sending test...' : hasCalls ? '⚡ Send Sample Telemetry' : '⚡ Send Test Event'}
-            </button>
-            {sentMsg && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">{sentMsg}</span>}
-          </div>
+          <p className="text-xs text-c-muted">Newest {calls.length} calls — metadata only, never prompts or responses</p>
         </div>
-
-        <div className="mt-4 flex items-center gap-2">
+        {errorCount > 0 && (
           <button
-            onClick={() => setTab('openai')}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              tab === 'openai'
-                ? 'bg-c-accent text-white shadow-sm'
-                : 'border border-c-line bg-c-card text-c-muted hover:text-c-ink'
+            type="button"
+            onClick={() => setOnlyErrors((v) => !v)}
+            className={`self-start rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors sm:self-auto ${
+              onlyErrors ? 'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'border-c-line bg-c-soft text-c-ink hover:bg-c-line'
             }`}
           >
-            OpenAI
+            {onlyErrors ? 'Show all' : `Only failures (${errorCount})`}
           </button>
-          <button
-            onClick={() => setTab('anthropic')}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              tab === 'anthropic'
-                ? 'bg-c-accent text-white shadow-sm'
-                : 'border border-c-line bg-c-card text-c-muted hover:text-c-ink'
-            }`}
-          >
-            Anthropic
-          </button>
-        </div>
-
-        <pre className="mt-3 overflow-x-auto rounded-lg border border-c-line bg-c-soft p-3.5 font-mono text-xs text-c-ink">
-          {tab === 'openai' ? openAiSnippet : anthropicSnippet}
-        </pre>
-
-        <pre className="mt-2 overflow-x-auto rounded-lg border border-c-line bg-c-soft p-3 font-mono text-xs text-c-ink">{`RUNTIME_PROJECT_ID=${projectId}
-RUNTIME_INGEST_URL=${origin}/api/runtime/ingest
-RUNTIME_CONFIG_URL=${origin}/api/runtime/config
-# Optional local static override:
-# RUNTIME_SPEND_CEILING_USD_PER_HOUR=5`}</pre>
+        )}
       </div>
-
-      <div className="rounded-xl border border-c-line bg-c-card p-6 shadow-sm">
-        <h3 className="text-base font-semibold text-c-ink">How AI Spend Guard Works</h3>
-        <ul className="mt-3 space-y-2 text-sm text-c-muted">
-          <li className="flex items-center gap-2">
-            <span className="text-emerald-500">✓</span>
-            <span><strong className="text-c-ink">Zero-proxy architecture:</strong> Your secret keys stay in your container; calls route direct to OpenAI/Anthropic.</span>
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="text-emerald-500">✓</span>
-            <span><strong className="text-c-ink">Dashboard-driven firewall:</strong> Set hourly ceilings directly in the dashboard; the SDK firewall refreshes its ceiling every 5 minutes in the background without redeploying code (with local env var override support).</span>
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="text-emerald-500">✓</span>
-            <span><strong className="text-c-ink">Fail-open safety:</strong> Network issues to telemetry endpoints will never block or fail your user-facing AI requests.</span>
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="text-emerald-500">✓</span>
-            <span><strong className="text-c-ink">Streaming inspection:</strong> Chunks stream through untouched; token usage is captured from final stream events with try/finally safety.</span>
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="text-emerald-500">✓</span>
-            <span><strong className="text-c-ink">Runaway loop detection:</strong> Per-user token attribution identifies which user or cron job is consuming &gt;80% of spend.</span>
-          </li>
-        </ul>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-c-line bg-c-soft/60 text-[11px] uppercase tracking-wider text-c-muted">
+              <th className="px-4 py-2.5">Time</th>
+              <th className="px-4 py-2.5">Model</th>
+              <th className="px-4 py-2.5">Tokens in / out</th>
+              <th className="px-4 py-2.5">Latency</th>
+              <th className="px-4 py-2.5">Cost</th>
+              <th className="px-4 py-2.5">Caller</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-c-line">
+            {visible.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-xs text-c-muted">
+                  No calls match this filter.
+                </td>
+              </tr>
+            ) : (
+              visible.map((c) => {
+                const failed = c.status === 'error';
+                return (
+                  <tr key={c.id} className={`transition-colors hover:bg-c-soft/40 ${failed ? 'bg-rose-500/5' : ''}`}>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-xs text-c-muted">
+                      {new Date(c.createdAt).toLocaleTimeString()}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-xs font-medium text-c-ink">{c.model}</span>
+                        <span className="rounded bg-c-soft px-1.5 py-0.5 text-[10px] capitalize text-c-muted">{c.provider ?? 'openai'}</span>
+                        {failed && (
+                          <span className="rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] font-medium text-rose-600 dark:text-rose-400">
+                            {c.errorKind ?? 'error'}
+                          </span>
+                        )}
+                        {c.source === 'sample' && (
+                          <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                            sample
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-c-ink">
+                      {failed ? '—' : `${c.promptTokens.toLocaleString()} / ${c.completionTokens.toLocaleString()}`}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-c-muted">{formatLatency(c.latencyMs ?? 0)}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs font-semibold text-c-ink">{failed ? '$0.00' : formatUsd(c.costMicroUsd)}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-c-muted">{c.userHash ? `${c.userHash.slice(0, 10)}…` : '—'}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

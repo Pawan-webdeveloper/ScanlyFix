@@ -8,6 +8,8 @@ export type CallRow = {
   costMicroUsd: number | null;
   userHash: string | null;
   source?: string | null;
+  status?: string | null;
+  errorKind?: string | null;
   createdAt: Date;
 };
 
@@ -24,36 +26,18 @@ export function projectEndOfHourMicroUsd(currentHourMicroUsd: number, now: Date 
   return Math.round((currentHourMicroUsd / minutesElapsed) * 60);
 }
 
-export type AiSummary = {
-  totalCalls: number;
-  totalCostMicroUsd: number;
-  totalTokensIn: number;
-  totalTokensOut: number;
-  byModel: Array<{ model: string; calls: number; costMicroUsd: number }>;
-  byUser: Array<{ userHash: string; calls: number; costMicroUsd: number }>;
-  /** ⭐ runaway-loop signal: 1 user > 80% spend */
-  topUserSharePct: number | null;
-};
+/**
+ * Did this call fail?
+ *
+ * `status` is NULL on success, because SDK builds that predate error reporting
+ * only ever sent successes — an absent value must read as "fine", never as
+ * "unknown, assume broken".
+ */
+export function isFailedCall(call: Pick<CallRow, 'status'>): boolean {
+  return call.status === 'error';
+}
 
-export function buildAiSummary(input: {
-  calls: CallRow[];
-  byModel: Array<{ model: string; calls: number; costMicroUsd: number }>;
-  byUser: Array<{ userHash: string | null; calls: number; costMicroUsd: number }>;
-}): AiSummary {
-  // Exclude simulated sample calls from spend and token rollups
-  const nonSampleCalls = input.calls.filter((c) => c.source !== 'sample');
-  const totalCost = nonSampleCalls.reduce((s, c) => s + (c.costMicroUsd ?? 0), 0);
-  const users = input.byUser.filter(
-    (u): u is { userHash: string; calls: number; costMicroUsd: number } => u.userHash !== null,
-  );
-  const top = users[0];
-  return {
-    totalCalls: nonSampleCalls.length,
-    totalCostMicroUsd: totalCost,
-    totalTokensIn: nonSampleCalls.reduce((s, c) => s + c.promptTokens, 0),
-    totalTokensOut: nonSampleCalls.reduce((s, c) => s + c.completionTokens, 0),
-    byModel: input.byModel,
-    byUser: users,
-    topUserSharePct: top && totalCost > 0 ? Math.round((top.costMicroUsd / totalCost) * 100) : null,
-  };
+/** Sample rows are seeded for demonstration and must never move a real number. */
+export function isSampleCall(call: Pick<CallRow, 'source'>): boolean {
+  return call.source === 'sample';
 }

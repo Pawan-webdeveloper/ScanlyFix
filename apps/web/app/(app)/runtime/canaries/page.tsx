@@ -12,6 +12,7 @@ import { CanaryConsole } from './canary-console';
 import { getViewer } from '@/lib/authz';
 import { hasRuntimeAccess } from '@/lib/entitlements';
 import { decryptValue } from '@/lib/header-encryption';
+import { SELFTEST_KIND } from '@/lib/runtime/canaries/types';
 import { PageHeader } from '@/components/console/page-header.tsx';
 import { Icon } from '@/components/console/icons.tsx';
 
@@ -86,7 +87,19 @@ export default async function CanariesPage({
   ]);
 
   const connected = cfg !== null;
-  const planted = canaries.some((c) => c.status === 'planted');
+
+  // The header badge used to be a hardcoded green "Active", which said the
+  // feature was running before Supabase was even connected — the single most
+  // misleading thing this page could claim.
+  const decoys = canaries.filter((c) => c.kind !== SELFTEST_KIND);
+  const live = decoys.filter((c) => c.status === 'planted' || c.status === 'compromised');
+  const badge = !connected
+    ? { label: 'Not connected', className: 'bg-c-soft text-c-muted' }
+    : live.length === 0
+      ? { label: 'Setup incomplete', className: 'bg-amber-500/10 text-amber-700 dark:text-amber-400' }
+      : decoys.some((c) => c.status === 'compromised')
+        ? { label: 'Compromised', className: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' }
+        : { label: 'Watching', className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' };
 
   return (
     <div className="console min-h-dvh bg-c-bg text-c-ink">
@@ -128,8 +141,8 @@ export default async function CanariesPage({
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <span className="inline-flex h-6 items-center rounded-md bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  Active
+                <span className={`inline-flex h-6 items-center rounded-md px-2 text-xs font-semibold ${badge.className}`}>
+                  {badge.label}
                 </span>
                 <h2 className="text-base font-semibold text-c-ink">{activeProject.name}</h2>
               </div>
@@ -145,10 +158,10 @@ export default async function CanariesPage({
         <CanaryConsole
           projectId={projectId}
           connected={connected}
-          planted={planted}
           anonKeyConnected={cfg?.anonKey != null}
           canaries={canaries.map((c) => ({
             marker: c.markerToken,
+            kind: c.kind,
             status: c.status,
             integrity: c.lastIntegrity,
             lastCheckedAt: c.lastCheckedAt?.toISOString() ?? null,
