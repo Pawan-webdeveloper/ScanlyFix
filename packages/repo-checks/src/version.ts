@@ -21,4 +21,4 @@
  * The registry count test in test/registry.test.ts is the tripwire: it fails on
  * every registry change, which is the moment to come back here.
  */
-export const REPO_ENGINE_VERSION = '0.1.0'
+export const REPO_ENGINE_VERSION = '0.2.0'

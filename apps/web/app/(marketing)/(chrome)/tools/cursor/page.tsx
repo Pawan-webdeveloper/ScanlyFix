@@ -1,8 +1,11 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Cursor AI Security Scanner',
-  description: 'Check apps built with Cursor AI for security vulnerabilities and AI visibility.',
+  title: 'Cursor AI Security Scanner | Check Apps Built with Cursor',
+  description: 'Check apps built with Cursor AI for security vulnerabilities, SEO issues, and AI visibility. Free scanner for AI-generated code.',
+  alternates: {
+    canonical: '/tools/cursor',
+  },
 }
 
 export default function CursorPage() {

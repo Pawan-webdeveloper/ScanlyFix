@@ -1,8 +1,24 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Website Security Scanner',
-  description: 'Free website security scanner. Check for vulnerabilities, exposed secrets, and misconfigurations in 60 seconds.',
+  title: 'Website Security Scanner | Free & Fast',
+  description: 'Free website security scanner. Check for vulnerabilities, exposed secrets, insecure headers, and misconfigurations in 60 seconds. No signup required.',
+  alternates: {
+    canonical: '/scanner',
+  },
+}
+
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'Website Security Scanner',
+  description: 'Free website security scanner that checks for vulnerabilities, exposed secrets, and misconfigurations.',
+  applicationCategory: 'SecurityApplication',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
 }
 
 export default function ScannerPage() {
@@ -41,6 +57,19 @@ export default function ScannerPage() {
           Run a free scan
         </Link>
       </div>
+
+      <p className="mt-8 text-muted">
+        Also check{' '}
+        <Link href="/seo" className="link">
+          SEO
+        </Link>{' '}
+        and{' '}
+        <Link href="/aeo" className="link">
+          AEO (AI visibility)
+        </Link>
+      </p>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )
 }

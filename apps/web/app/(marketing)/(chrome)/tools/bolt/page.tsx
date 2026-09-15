@@ -1,8 +1,11 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Bolt Security Scanner',
-  description: 'Check Bolt apps for security vulnerabilities, SEO issues, and AI visibility.',
+  title: 'Bolt Security Scanner | Check Apps Built with Bolt',
+  description: 'Check Bolt apps for security vulnerabilities, SEO issues, and AI visibility. Free scanner for vibe-coded apps. Run in 60 seconds.',
+  alternates: {
+    canonical: '/tools/bolt',
+  },
 }
 
 export default function BoltPage() {

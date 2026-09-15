@@ -25,7 +25,7 @@ export default function AboutPage() {
 
       <div className="mt-12 flex flex-col gap-10">
         <section>
-          <h2 className="label text-ink">[ 01 ] What it does</h2>
+          <h3 className="label text-ink">[ 01 ] What it does</h3>
           <div className="mt-4 flex flex-col gap-4 text-[15px] leading-relaxed text-pretty">
             <p>
               You give it a URL. It fetches the page the way a browser would,
@@ -41,7 +41,7 @@ export default function AboutPage() {
         </section>
 
         <section>
-          <h2 className="label text-ink">[ 02 ] Why it exists</h2>
+          <h3 className="label text-ink">[ 02 ] Why it exists</h3>
           <div className="mt-4 flex flex-col gap-4 text-[15px] leading-relaxed text-pretty">
             <p>
               Most site owners know they should care about security headers,
@@ -58,7 +58,7 @@ export default function AboutPage() {
         </section>
 
         <section>
-          <h2 className="label text-ink">[ 03 ] Who runs it</h2>
+          <h3 className="label text-ink">[ 03 ] Who runs it</h3>
           <div className="mt-4 flex flex-col gap-4 text-[15px] leading-relaxed text-pretty">
             <p>
               {legal.service} is operated by {operator()}. If you have a

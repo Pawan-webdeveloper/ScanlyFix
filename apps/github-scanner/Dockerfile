@@ -58,10 +58,12 @@ RUN set -eux; \
 # --- Stage 2: the service ------------------------------------------------
 FROM node:22-alpine
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    PNPM_HOME=/usr/local/bin
+RUN corepack enable
 
 # git performs the bounded clone; ca-certificates lets git (and Node's fetch)
-# verify github.com's TLS. Nothing else is needed from the package manager.
+# verify github.com's TLS.
 RUN apk add --no-cache git ca-certificates
 
 WORKDIR /app
@@ -70,12 +72,19 @@ WORKDIR /app
 COPY --from=tools /usr/local/bin/gitleaks    /usr/local/bin/gitleaks
 COPY --from=tools /usr/local/bin/osv-scanner /usr/local/bin/osv-scanner
 
-# This shell has no runtime npm dependencies (node:http + node builtins only),
-# so there is no workspace install. When the scan pipeline lands and pulls in
-# @scanlyfix/repo-checks, switch to the `pnpm install --filter` pattern used by
-# apps/scanner/Dockerfile.
-COPY apps/github-scanner/package.json ./apps/github-scanner/package.json
-COPY apps/github-scanner/src          ./apps/github-scanner/src
+# Workspace manifests first, so a source-only change does not reinstall.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/github-scanner/package.json ./apps/github-scanner/
+COPY packages/repo-checks/package.json ./packages/repo-checks/
+COPY packages/checks/package.json     ./packages/checks/
+
+# --filter pulls @scanlyfix/repo-checks (and its @scanlyfix/checks + yaml deps),
+# which the worker needs to run the repo checks over the assembled context.
+RUN pnpm install --frozen-lockfile --filter @scanlyfix/github-scanner...
+
+COPY packages/checks      ./packages/checks
+COPY packages/repo-checks ./packages/repo-checks
+COPY apps/github-scanner  ./apps/github-scanner
 
 WORKDIR /app/apps/github-scanner
 EXPOSE 8081

@@ -28,22 +28,21 @@ const emitting = (id: string, severity: RepoFinding['severity']): RepoCheck => (
 
 describe('allRepoChecks', () => {
   it('registers every check under a unique, category-prefixed id', () => {
-    expect(allRepoChecks).toHaveLength(19)
+    expect(allRepoChecks).toHaveLength(21)
     const perPillar = Object.fromEntries(
       ['secrets', 'supply-chain', 'ci-cd', 'code-quality', 'dependencies', 'governance'].map((pillar) => [
         pillar,
         allRepoChecks.filter((c) => c.category === pillar).length,
       ]),
     )
-    // Phase A ships the shallow pillars only. secrets/code-quality/dependencies
-    // arrive with the deep scan in Phase C, at which point this count and the
-    // version both bump together.
+    // Shallow pillars plus the two deep checks (secrets from gitleaks,
+    // dependencies from osv-scanner). code-quality still arrives later.
     expect(perPillar).toEqual({
-      secrets: 0,
+      secrets: 1,
       'supply-chain': 5,
       'ci-cd': 8,
       'code-quality': 0,
-      dependencies: 0,
+      dependencies: 1,
       governance: 6,
     })
 

@@ -58,16 +58,10 @@ export async function generateMetadata({
   const data = await getPublicStatus(slug)
   if (!data) return { title: 'Status page not found' }
 
-  return {
-    title: `${data.projectName} status`,
-    description: `Live status and uptime for ${data.projectUrl}.`,
-    // Phase 6.4: owner-controlled robots policy. Default (indexable) lets
-    // search engines find the page from links customers share. Opt-out
-    // emits a noindex meta tag without changing anything else.
-    robots: data.branding.robotsIndexable
-      ? { index: true, follow: true }
-      : { index: false, follow: false },
-  }
+   return {
+     title: `${data.projectName} status`,
+     description: `Live status and uptime for ${data.projectUrl}.`,
+   }
 }
 
 export default async function StatusPage({

@@ -7,17 +7,20 @@
 /** Hard cap on the history window the caller may request. */
 export const MAX_HISTORY_DEPTH = 2000
 
+export type ScanProfile = 'shallow' | 'deep'
+
 export interface ScanRequest {
   installationId: number
   owner: string
   name: string
   defaultBranch: string
+  profile: ScanProfile
   historyDepth?: number
 }
 
 /**
- * Accepts the current web-side contract (installationId/owner/name/
- * defaultBranch) and tolerates the fields the pipeline will add (historyDepth),
+ * Accepts the web-side contract (installationId/owner/name/defaultBranch/
+ * profile) and tolerates the fields the pipeline will add (historyDepth),
  * ignoring anything else it is sent.
  */
 export function parseScanRequest(raw: unknown): { ok: true; value: ScanRequest } | { ok: false; error: string } {
@@ -43,7 +46,12 @@ export function parseScanRequest(raw: unknown): { ok: true; value: ScanRequest }
     return { ok: false, error: 'defaultBranch is required' }
   }
 
-  const value: ScanRequest = { installationId, owner, name, defaultBranch }
+  const profile = body['profile'] === undefined ? 'shallow' : body['profile']
+  if (profile !== 'shallow' && profile !== 'deep') {
+    return { ok: false, error: 'profile must be "shallow" or "deep"' }
+  }
+
+  const value: ScanRequest = { installationId, owner, name, defaultBranch, profile }
 
   const historyDepth = body['historyDepth']
   if (historyDepth !== undefined) {

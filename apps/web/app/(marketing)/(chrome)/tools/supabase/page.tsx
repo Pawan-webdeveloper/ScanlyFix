@@ -1,8 +1,11 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Supabase Security Scanner',
-  description: 'Check Supabase backends for RLS issues, exposed secrets, and security misconfigurations.',
+  title: 'Supabase Security Scanner | Check Backend Security',
+  description: 'Check Supabase backends for Row Level Security issues, exposed secrets, and security misconfigurations. Free tool for Supabase projects.',
+  alternates: {
+    canonical: '/tools/supabase',
+  },
 }
 
 export default function SupabasePage() {

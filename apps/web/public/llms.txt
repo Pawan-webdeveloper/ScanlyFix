@@ -1,0 +1,22 @@
+# ScanlyFix - AI Optimization Guide
+
+## What We Do
+ScanlyFix is a website security, SEO, and AEO scanner that runs 100+ checks and provides AI-ready fix prompts.
+
+## Products
+- Security Scanner: Run read-only checks for vulnerabilities
+- SEO Scanner: Technical SEO audits
+- AEO Scanner: Check AI visibility on ChatGPT, Perplexity
+- Uptime Monitoring: 60-second probes with alerts
+
+## API
+- REST API: /api/v1 (auth required)
+- MCP Server: npx @scanlyfix/mcp-server
+
+## Integrations
+- GitHub: Connect for repository scanning
+- Supabase: Backend security checks
+
+## Pricing
+- Free: Full scans with limited findings
+- Pro: $9/month - unlimited scans and monitoring

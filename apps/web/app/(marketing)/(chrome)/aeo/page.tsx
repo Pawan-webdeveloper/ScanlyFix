@@ -1,8 +1,24 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'AEO Scanner',
-  description: 'Free AI visibility scanner. Check if ChatGPT, Perplexity, and Claude can find and cite your site.',
+  title: 'AEO (Answer Engine Optimization) Scanner',
+  description: 'Free AI visibility scanner. Check if ChatGPT, Perplexity, and Claude can find, understand, and cite your site. Optimize for AI search results.',
+  alternates: {
+    canonical: '/aeo',
+  },
+}
+
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'AEO Scanner',
+  description: 'Free AI visibility scanner for Answer Engine Optimization. Check if AI tools can find and cite your site.',
+  applicationCategory: 'SEOTool',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
 }
 
 export default function AeoPage() {
@@ -38,6 +54,8 @@ export default function AeoPage() {
           Run a free AEO scan
         </Link>
       </div>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )
 }

@@ -1,8 +1,24 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'SEO Scanner',
-  description: 'Free SEO audit tool. Check meta tags, structured data, sitemaps, and Core Web Vitals.',
+  title: 'Free SEO Scanner & Audit Tool',
+  description: 'Free SEO audit tool. Check meta tags, structured data, sitemaps, Core Web Vitals, and technical SEO issues in one scan. No signup required.',
+  alternates: {
+    canonical: '/seo',
+  },
+}
+
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'SEO Scanner & Audit Tool',
+  description: 'Free SEO audit tool that checks meta tags, structured data, sitemaps, and Core Web Vitals.',
+  applicationCategory: 'SEOTool',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
 }
 
 export default function SeoPage() {
@@ -42,6 +58,8 @@ export default function SeoPage() {
           Run a free SEO audit
         </Link>
       </div>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )
 }

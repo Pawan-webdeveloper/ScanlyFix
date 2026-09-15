@@ -27,7 +27,7 @@ export function LegalPage({
     <div className="mx-auto max-w-2xl px-6 py-16">
       <LabeledRule label={label} trailing={`in force ${effective}`} />
 
-      <h1 className="mt-6 text-2xl font-semibold tracking-[-0.02em] text-balance sm:text-3xl">
+      <h1 className="mt-6 text-3xl font-semibold tracking-[-0.02em] text-balance">
         {title}
       </h1>
 
@@ -50,7 +50,7 @@ export function Clause({
 }) {
   return (
     <section>
-      <h2 className="label text-ink">
+      <h3 className="label text-ink">
         {`[ ${String(index).padStart(2, '0')} ] `}
         {heading}
       </h2>

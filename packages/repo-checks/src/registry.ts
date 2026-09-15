@@ -30,6 +30,8 @@ import { actionsNotPinnedToShaCheck } from './checks/supply-chain/action-pinning
 import { prTargetInjectionCheck } from './checks/supply-chain/pr-target-injection.ts'
 import { permissionsMissingCheck, permissionsWriteAllCheck } from './checks/supply-chain/workflow-permissions.ts'
 import { dependabotDisabledCheck } from './checks/supply-chain/dependabot.ts'
+import { committedSecretsCheck } from './checks/secrets/committed-secrets.ts'
+import { knownVulnerabilitiesCheck } from './checks/dependencies/known-vulnerabilities.ts'
 
 export const allRepoChecks: readonly RepoCheck[] = [
   // governance — repo-responsibility files. Mostly low/info; the gitignore one
@@ -58,6 +60,9 @@ export const allRepoChecks: readonly RepoCheck[] = [
   permissionsWriteAllCheck,
   permissionsMissingCheck,
   dependabotDisabledCheck,
+  // deep — read the cloned tree; silent on a shallow scan (no clone).
+  committedSecretsCheck,
+  knownVulnerabilitiesCheck,
 ]
 
 export interface RepoRunResult {
