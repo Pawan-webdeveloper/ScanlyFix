@@ -34,7 +34,7 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --allow-scripts=@google/genai
+        run: pnpm install --frozen-lockfile --allow-scripts
 
       - name: Typecheck
         run: pnpm typecheck
