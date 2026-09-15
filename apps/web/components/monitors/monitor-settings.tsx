@@ -305,7 +305,7 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
     return (
       <div className="space-y-3">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-9 w-full animate-pulse rounded-lg bg-gray-100" />
+          <div key={i} className="h-9 w-full animate-pulse rounded-lg bg-c-soft" />
         ))}
       </div>
     )
@@ -316,14 +316,14 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
 
       {/* Status code threshold */}
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-gray-600">
+        <label className="block text-xs font-medium text-c-muted">
           Alert on
         </label>
         <select
           value={preset}
           onChange={(e) => setPreset(e.target.value as AlertPresetKey)}
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                     focus:border-gray-400 focus:outline-none focus:ring-0"
+          className="w-full rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                     focus:border-c-accent focus:outline-none focus:ring-0"
         >
           {(Object.keys(ALERT_PRESETS) as AlertPresetKey[]).map((key) => (
             <option key={key} value={key}>
@@ -335,31 +335,31 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
 
       {/* Expected status codes */}
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-gray-600">
+        <label className="block text-xs font-medium text-c-muted">
           Expected status codes
-          <span className="ml-1 font-normal text-gray-400">optional — comma-separated</span>
+          <span className="ml-1 font-normal text-c-muted/70">optional — comma-separated</span>
         </label>
         <input
           type="text"
           placeholder="e.g. 200, 201, 204"
           value={expectedStatusCodes}
           onChange={(e) => setExpectedStatusCodes(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                     placeholder:text-gray-300 focus:border-gray-400 focus:outline-none focus:ring-0"
+          className="w-full rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                     placeholder:text-c-muted/50 focus:border-c-accent focus:outline-none focus:ring-0"
         />
         {fieldErrors.expectedStatusCodes && (
           <p className="text-xs text-red-500">{fieldErrors.expectedStatusCodes}</p>
         )}
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-c-muted/70">
           Only these codes are OK — anything else triggers alert
         </p>
       </div>
 
       {/* Latency threshold */}
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-gray-600">
+        <label className="block text-xs font-medium text-c-muted">
           Max latency (ms)
-          <span className="ml-1 font-normal text-gray-400">optional</span>
+          <span className="ml-1 font-normal text-c-muted/70">optional</span>
         </label>
         <input
           type="number"
@@ -369,11 +369,11 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
           placeholder="e.g. 3000"
           value={maxLatencyMs}
           onChange={(e) => setMaxLatencyMs(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                     placeholder:text-gray-300 focus:border-gray-400 focus:outline-none focus:ring-0"
+          className="w-full rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                     placeholder:text-c-muted/50 focus:border-c-accent focus:outline-none focus:ring-0"
         />
         {maxLatencyMs && (
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-c-muted/70">
             Alert when response takes longer than {Number(maxLatencyMs).toLocaleString()}ms
           </p>
         )}
@@ -381,16 +381,16 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
 
       {/* Keyword check */}
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-gray-600">
+        <label className="block text-xs font-medium text-c-muted">
           Keyword check
-          <span className="ml-1 font-normal text-gray-400">optional</span>
+          <span className="ml-1 font-normal text-c-muted/70">optional</span>
         </label>
         <div className="flex gap-2">
           <select
             value={keywordType}
             onChange={(e) => setKeywordType(e.target.value as 'should_contain' | 'should_not_contain')}
-            className="w-40 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                       focus:border-gray-400 focus:outline-none focus:ring-0"
+            className="w-40 rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                       focus:border-c-accent focus:outline-none focus:ring-0"
           >
             <option value="should_contain">Should contain</option>
             <option value="should_not_contain">Should not contain</option>
@@ -401,15 +401,15 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
             value={keywordValue}
             onChange={(e) => setKeywordValue(e.target.value)}
             maxLength={500}
-            className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                       placeholder:text-gray-300 focus:border-gray-400 focus:outline-none focus:ring-0"
+            className="flex-1 rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                       placeholder:text-c-muted/50 focus:border-c-accent focus:outline-none focus:ring-0"
           />
         </div>
         {fieldErrors.keywordValue && (
           <p className="text-xs text-red-500">{fieldErrors.keywordValue}</p>
         )}
         {keywordValue && (
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-c-muted/70">
             {keywordType === 'should_contain'
               ? `Alert if response doesn't contain "${keywordValue}"`
               : `Alert if response contains "${keywordValue}"`}
@@ -419,34 +419,34 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
 
       {/* HTTP Method */}
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-gray-600">
+        <label className="block text-xs font-medium text-c-muted">
           HTTP method
         </label>
         <select
           value={httpMethod}
           onChange={(e) => setHttpMethod(e.target.value as 'GET' | 'HEAD')}
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                     focus:border-gray-400 focus:outline-none focus:ring-0"
+          className="w-full rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                     focus:border-c-accent focus:outline-none focus:ring-0"
         >
           <option value="GET">GET (full response)</option>
           <option value="HEAD">HEAD (headers only, faster)</option>
         </select>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-c-muted/70">
           HEAD is faster but doesn't support keyword checks
         </p>
       </div>
 
       {/* Reminder interval */}
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-gray-600">
+        <label className="block text-xs font-medium text-c-muted">
           Downtime reminder
-          <span className="ml-1 font-normal text-gray-400">optional</span>
+          <span className="ml-1 font-normal text-c-muted/70">optional</span>
         </label>
         <select
           value={reminderIntervalMin}
           onChange={(e) => setReminderIntervalMin(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                     focus:border-gray-400 focus:outline-none focus:ring-0"
+          className="w-full rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                     focus:border-c-accent focus:outline-none focus:ring-0"
         >
           <option value="">Disabled</option>
           <option value="15">Every 15 minutes</option>
@@ -454,16 +454,16 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
           <option value="60">Every 1 hour</option>
           <option value="120">Every 2 hours</option>
         </select>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-c-muted/70">
           Send reminder emails while site is down
         </p>
       </div>
 
       {/* Custom Headers */}
       <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-gray-600">
+        <label className="block text-xs font-medium text-c-muted">
           Custom headers
-          <span className="ml-1 font-normal text-gray-400">optional — max 5</span>
+          <span className="ml-1 font-normal text-c-muted/70">optional — max 5</span>
         </label>
 
         {/* Existing headers (masked) */}
@@ -471,7 +471,7 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
           <div className="space-y-2">
             {existingHeaders.map((header, i) => (
               <div key={`existing-${i}`} className="flex items-center gap-2">
-                <code className="flex-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                <code className="flex-1 rounded bg-c-soft px-2 py-1 text-xs text-c-muted">
                   {header.key}: {header.valueMasked}
                 </code>
                 <button
@@ -489,7 +489,7 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
         {/* New headers */}
         {headers.map((header, i) => (
           <div key={`new-${i}`} className="flex items-center gap-2">
-            <code className="flex-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
+            <code className="flex-1 rounded bg-c-soft px-2 py-1 text-xs text-c-muted">
               {header.key}: ***{header.value.slice(-4)}
             </code>
             <button
@@ -509,23 +509,23 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
             placeholder="Key"
             value={newHeaderKey}
             onChange={(e) => setNewHeaderKey(e.target.value)}
-            className="w-32 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                       placeholder:text-gray-300 focus:border-gray-400 focus:outline-none focus:ring-0"
+            className="w-32 rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                       placeholder:text-c-muted/50 focus:border-c-accent focus:outline-none focus:ring-0"
           />
           <input
             type="password"
             placeholder="Value"
             value={newHeaderValue}
             onChange={(e) => setNewHeaderValue(e.target.value)}
-            className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700
-                       placeholder:text-gray-300 focus:border-gray-400 focus:outline-none focus:ring-0"
+            className="flex-1 rounded-lg border border-c-line bg-c-card px-3 py-2 text-sm text-c-ink
+                       placeholder:text-c-muted/50 focus:border-c-accent focus:outline-none focus:ring-0"
           />
           <button
             type="button"
             onClick={addHeader}
             disabled={!newHeaderKey || !newHeaderValue}
-            className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600
-                       hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-c-line px-3 py-2 text-sm text-c-muted
+                       hover:bg-c-soft disabled:opacity-50"
           >
             Add
           </button>
@@ -539,7 +539,7 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
         {fieldErrors.headers && (
           <p className="text-xs text-red-500">{fieldErrors.headers}</p>
         )}
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-c-muted/70">
           Values are encrypted at rest — only first use sends plaintext
         </p>
       </div>
@@ -553,8 +553,8 @@ export function MonitorSettings({ monitorId, onSaved }: MonitorSettingsProps) {
       <button
         onClick={handleSave}
         disabled={isSaving}
-        className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm
-                   font-medium text-white transition-opacity hover:opacity-80
+        className="flex items-center gap-2 rounded-lg bg-c-ink px-4 py-2 text-sm
+                   font-medium text-c-brand-ink transition-opacity hover:opacity-80
                    disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isSaving ? 'Saving…' : saved ? '✓ Saved' : 'Save settings'}

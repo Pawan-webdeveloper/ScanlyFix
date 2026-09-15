@@ -20,12 +20,46 @@ const mockUpdateWhere = vi.fn();
 const mockUpdate = vi.fn(() => ({
   set: mockUpdateSet,
 }));
+/**
+ * A self-referential stand-in for the Drizzle query builder.
+ *
+ * Each test used to wire the exact chain it expected — from().where().groupBy()
+ * and so on — with mockReturnValueOnce, which meant adding a .limit() to a
+ * query, or running two queries concurrently instead of in sequence, broke
+ * tests that had nothing to say about either change. Every builder method here
+ * returns the same object, and the object is thenable, so the shape of the
+ * chain is irrelevant and only the result matters.
+ *
+ * What these tests can check is the JavaScript around the query: coercion of
+ * the driver's bigint strings, rounding, and bucket filling. What they cannot
+ * check is SQL semantics — that is covered against a real Postgres in
+ * runtime-ai-aggregates.test.ts.
+ */
+const selectResults: unknown[][] = [];
 const mockSelectLimit = vi.fn();
-const mockSelectOrderBy = vi.fn();
-const mockSelectGroupBy = vi.fn();
-const mockSelectWhere = vi.fn();
-const mockSelectFrom = vi.fn();
 const mockSelect = vi.fn();
+
+/** Queue the rows the next select should resolve to. */
+function queueSelect(rows: unknown[]): void {
+  selectResults.push(rows);
+}
+
+function makeQueryBuilder(): Record<string, unknown> {
+  const rows = selectResults.shift() ?? [];
+  const builder: Record<string, unknown> = {
+    then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(rows).then(resolve, reject),
+  };
+  for (const method of ['from', 'where', 'groupBy', 'orderBy', 'having', 'as', 'innerJoin', 'leftJoin']) {
+    builder[method] = () => builder;
+  }
+  // limit() is spied separately because a couple of tests assert the value.
+  builder.limit = (...args: unknown[]) => {
+    mockSelectLimit(...args);
+    return builder;
+  };
+  return builder;
+}
 
 const mockExecute = vi.fn();
 
@@ -33,7 +67,14 @@ vi.mock('../src/client.ts', () => ({
   db: {
     insert: (...args: unknown[]) => mockInsert(...args),
     update: (...args: unknown[]) => mockUpdate(...args),
-    select: (...args: unknown[]) => mockSelect(...args),
+    select: (...args: unknown[]) => {
+      mockSelect(...args);
+      return makeQueryBuilder();
+    },
+    selectDistinct: (...args: unknown[]) => {
+      mockSelect(...args);
+      return makeQueryBuilder();
+    },
     execute: (...args: unknown[]) => mockExecute(...args),
   },
 }));
@@ -55,6 +96,7 @@ import {
 describe('packages/db runtime-ai queries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    selectResults.length = 0;
   });
 
   describe('recordAiCallEvents', () => {
@@ -75,43 +117,62 @@ describe('packages/db runtime-ai queries', () => {
           promptTokens: 10.7,
           completionTokens: 5.2,
           latencyMs: 120.9,
-          costMicroUsd: 45.8,
-          userHash: 'hash-abc',
+          costMicroUsd: 45.6,
+          userHash: 'u_1',
         },
         {
           provider: 'anthropic',
           model: 'claude-3-5-sonnet',
-          promptTokens: -5,
-          completionTokens: 0,
-          costMicroUsd: 0,
+          promptTokens: -4,
+          completionTokens: Number.NaN,
+          costMicroUsd: -100,
         },
       ]);
 
       expect(count).toBe(2);
-      expect(mockValues).toHaveBeenCalledWith([
-        {
-          projectId: 'proj-1',
-          provider: 'openai',
-          model: 'gpt-4o',
-          promptTokens: 11,
-          completionTokens: 5,
-          latencyMs: 121,
-          costMicroUsd: 46,
-          userHash: 'hash-abc',
-          source: null,
-        },
-        {
-          projectId: 'proj-1',
-          provider: 'anthropic',
-          model: 'claude-3-5-sonnet',
-          promptTokens: 0,
-          completionTokens: 0,
-          latencyMs: 0,
-          costMicroUsd: 0,
-          userHash: null,
-          source: null,
-        },
+      const rows = mockValues.mock.calls[0]![0] as Array<Record<string, unknown>>;
+
+      expect(rows[0]).toMatchObject({
+        projectId: 'proj-1',
+        provider: 'openai',
+        model: 'gpt-4o',
+        promptTokens: 11,
+        completionTokens: 5,
+        latencyMs: 121,
+        costMicroUsd: 46,
+        userHash: 'u_1',
+      });
+
+      // Negative and NaN inputs clamp to zero rather than reaching the column.
+      expect(rows[1]).toMatchObject({
+        promptTokens: 0,
+        completionTokens: 0,
+        latencyMs: 0,
+        costMicroUsd: 0,
+        userHash: null,
+        source: null,
+      });
+
+      // A success is stored with a NULL status, so rows written by SDK builds
+      // that predate error reporting keep reading as successes.
+      expect(rows.every((r) => r.status === null && r.errorKind === null)).toBe(true);
+    });
+
+    it('stores a failure with its label, and defaults an unlabelled failure to unknown', async () => {
+      mockReturning.mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+      mockValues.mockReturnValueOnce({ returning: mockReturning });
+
+      await recordAiCallEvents('proj-1', [
+        { provider: 'openai', model: 'gpt-4o', promptTokens: 0, completionTokens: 0, costMicroUsd: 0, status: 'error', errorKind: 'rate_limit' },
+        { provider: 'openai', model: 'gpt-4o', promptTokens: 0, completionTokens: 0, costMicroUsd: 0, status: 'error' },
+        // A success that claims an errorKind must not get one.
+        { provider: 'openai', model: 'gpt-4o', promptTokens: 1, completionTokens: 1, costMicroUsd: 1, errorKind: 'auth' },
       ]);
+
+      const rows = mockValues.mock.calls[0]![0] as Array<Record<string, unknown>>;
+      expect(rows[0]).toMatchObject({ status: 'error', errorKind: 'rate_limit' });
+      expect(rows[1]).toMatchObject({ status: 'error', errorKind: 'unknown' });
+      expect(rows[2]).toMatchObject({ status: null, errorKind: null });
     });
 
     it('records events with source=sample for test calls', async () => {
@@ -139,13 +200,8 @@ describe('packages/db runtime-ai queries', () => {
   });
 
   describe('listRecentAiCalls', () => {
-    it('builds select query with limit and ordering', async () => {
-      mockSelectLimit.mockResolvedValueOnce([{ id: 'call-1' }]);
-      mockSelectOrderBy.mockReturnValueOnce({ limit: mockSelectLimit });
-      mockSelectWhere.mockReturnValueOnce({ orderBy: mockSelectOrderBy });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
-
+    it('honours the row cap it is given', async () => {
+      queueSelect([{ id: 'call-1' }]);
       const res = await listRecentAiCalls('proj-1', 50);
       expect(res).toEqual([{ id: 'call-1' }]);
       expect(mockSelectLimit).toHaveBeenCalledWith(50);
@@ -153,56 +209,63 @@ describe('packages/db runtime-ai queries', () => {
   });
 
   describe('getSpendBreakdown', () => {
-    it('converts pg-driver bigint strings to numbers', async () => {
-      // Setup mock chain for byModel query
-      mockSelectOrderBy.mockResolvedValueOnce([
-        { model: 'gpt-4o', calls: '10', costMicroUsd: '50000' },
+    it('converts every pg-driver bigint string to a number', async () => {
+      // The driver returns bigint columns as strings; a missed coercion shows up
+      // as string concatenation in a total, which is silent and very wrong.
+      queueSelect([
+        {
+          model: 'gpt-4o',
+          provider: 'openai',
+          calls: '10',
+          errors: '2',
+          costMicroUsd: '50000',
+          promptTokens: '1200',
+          completionTokens: '400',
+          p50LatencyMs: '350',
+        },
       ]);
-      mockSelectGroupBy.mockReturnValueOnce({ orderBy: mockSelectOrderBy });
-      mockSelectWhere.mockReturnValueOnce({ groupBy: mockSelectGroupBy });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
-
-      // Setup mock chain for byUser query
-      mockSelectLimit.mockResolvedValueOnce([
-        { userHash: 'user-1', calls: '10', costMicroUsd: '50000' },
-      ]);
-      mockSelectOrderBy.mockReturnValueOnce({ limit: mockSelectLimit });
-      mockSelectGroupBy.mockReturnValueOnce({ orderBy: mockSelectOrderBy });
-      mockSelectWhere.mockReturnValueOnce({ groupBy: mockSelectGroupBy });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
+      queueSelect([{ userHash: 'user-1', calls: '10', errors: '2', costMicroUsd: '50000' }]);
 
       const breakdown = await getSpendBreakdown('proj-1', 60);
       expect(breakdown.byModel).toEqual([
-        { model: 'gpt-4o', calls: 10, costMicroUsd: 50000 },
+        {
+          model: 'gpt-4o',
+          provider: 'openai',
+          calls: 10,
+          errors: 2,
+          costMicroUsd: 50000,
+          promptTokens: 1200,
+          completionTokens: 400,
+          p50LatencyMs: 350,
+        },
       ]);
-      expect(breakdown.byUser).toEqual([
-        { userHash: 'user-1', calls: 10, costMicroUsd: 50000 },
-      ]);
+      expect(breakdown.byUser).toEqual([{ userHash: 'user-1', calls: 10, errors: 2, costMicroUsd: 50000 }]);
+      for (const value of Object.values(breakdown.byModel[0]!)) {
+        if (typeof value !== 'string') expect(Number.isFinite(value)).toBe(true);
+      }
+    });
+
+    it('falls back to a readable provider when the group has none', async () => {
+      queueSelect([{ model: 'mystery', provider: null, calls: '1', errors: '0', costMicroUsd: '1', promptTokens: '1', completionTokens: '1', p50LatencyMs: '1' }]);
+      queueSelect([]);
+      const breakdown = await getSpendBreakdown('proj-1', 60);
+      expect(breakdown.byModel[0]?.provider).toBe('unknown');
     });
   });
 
   describe('getSpendCeilingMicroUsd & setSpendCeiling', () => {
     it('returns ceiling as number or null', async () => {
-      mockSelectLimit.mockResolvedValueOnce([{ c: '5000000' }]);
-      mockSelectWhere.mockReturnValueOnce({ limit: mockSelectLimit });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
-
+      queueSelect([{ c: '5000000' }]);
       const val = await getSpendCeilingMicroUsd('proj-1');
       expect(val).toBe(5_000_000);
       expect(typeof val).toBe('number');
     });
 
     it('returns null when no row or null ceiling', async () => {
-      mockSelectLimit.mockResolvedValueOnce([]);
-      mockSelectWhere.mockReturnValueOnce({ limit: mockSelectLimit });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
-
-      const val = await getSpendCeilingMicroUsd('proj-none');
-      expect(val).toBeNull();
+      queueSelect([]);
+      expect(await getSpendCeilingMicroUsd('proj-none')).toBeNull();
+      queueSelect([{ c: null }]);
+      expect(await getSpendCeilingMicroUsd('proj-1')).toBeNull();
     });
 
     it('setSpendCeiling rounds numbers and supports null', async () => {
@@ -240,13 +303,14 @@ describe('packages/db runtime-ai queries', () => {
   });
 
   describe('listSpendWatchProjectIds', () => {
-    it('returns array of project id strings', async () => {
-      mockSelectWhere.mockResolvedValueOnce([{ id: 'p1' }, { id: 'p2' }]);
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
+    it('returns the distinct project ids it found', async () => {
+      queueSelect([{ id: 'p1' }, { id: 'p2' }]);
+      expect(await listSpendWatchProjectIds()).toEqual(['p1', 'p2']);
+    });
 
-      const ids = await listSpendWatchProjectIds();
-      expect(ids).toEqual(['p1', 'p2']);
+    it('returns nothing when no project has spent recently', async () => {
+      queueSelect([]);
+      expect(await listSpendWatchProjectIds(30)).toEqual([]);
     });
   });
 
@@ -297,21 +361,13 @@ describe('packages/db runtime-ai queries', () => {
   describe('getModelPricingCatalog & upsertModelPricingCatalog', () => {
     it('returns catalog array when row exists', async () => {
       const mockCatalog = [{ model: 'gpt-4o', inputUsdPerMillion: 2.5, outputUsdPerMillion: 10 }];
-      mockSelectLimit.mockResolvedValueOnce([{ catalog: mockCatalog }]);
-      mockSelectWhere.mockReturnValueOnce({ limit: mockSelectLimit });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
-
+      queueSelect([{ catalog: mockCatalog }]);
       const res = await getModelPricingCatalog();
       expect(res).toEqual(mockCatalog);
     });
 
     it('returns null when no catalog row exists', async () => {
-      mockSelectLimit.mockResolvedValueOnce([]);
-      mockSelectWhere.mockReturnValueOnce({ limit: mockSelectLimit });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
-
+      queueSelect([]);
       const res = await getModelPricingCatalog();
       expect(res).toBeNull();
     });
@@ -338,16 +394,7 @@ describe('packages/db runtime-ai queries', () => {
       const fixedNow = new Date('2026-09-12T15:30:00Z');
       const activeHour = new Date('2026-09-12T12:00:00Z').toISOString();
 
-      mockSelectGroupBy.mockResolvedValueOnce([
-        {
-          bucketHour: activeHour,
-          calls: '5',
-          costMicroUsd: '250000',
-        },
-      ]);
-      mockSelectWhere.mockReturnValueOnce({ groupBy: mockSelectGroupBy });
-      mockSelectFrom.mockReturnValueOnce({ where: mockSelectWhere });
-      mockSelect.mockReturnValueOnce({ from: mockSelectFrom });
+      queueSelect([{ bucketHour: activeHour, calls: '5', costMicroUsd: '250000' }]);
 
       const buckets = await getSpendHourlyBuckets('p-buckets', 24, fixedNow);
 

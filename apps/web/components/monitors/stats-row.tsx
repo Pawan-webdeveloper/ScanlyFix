@@ -74,8 +74,8 @@ function Stat({
       : '#22c55e'
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-500">
+    <div className="rounded-lg border border-c-line bg-c-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-c-muted">
         {label}
       </p>
       <p
@@ -84,7 +84,7 @@ function Stat({
       >
         {display}
       </p>
-      <p className="mt-2 text-xs text-gray-500">
+      <p className="mt-2 text-xs text-c-muted">
         {checks === null
           ? 'No data yet'
           : `${checks} check${checks === 1 ? '' : 's'}`}
@@ -95,12 +95,12 @@ function Stat({
 
 function LatencyCard({ avgLatencyMs }: { avgLatencyMs: number | null }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-500">
+    <div className="rounded-lg border border-c-line bg-c-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-c-muted">
         Answer speed
       </p>
       <p
-        className="mt-3 text-[28px] font-bold leading-none tracking-tight text-gray-900"
+        className="mt-3 text-[28px] font-bold leading-none tracking-tight text-c-ink"
         aria-label={avgLatencyMs === null ? 'No answer speed data yet' : `${avgLatencyMs} milliseconds`}
       >
         {avgLatencyMs === null ? (
@@ -109,7 +109,7 @@ function LatencyCard({ avgLatencyMs }: { avgLatencyMs: number | null }) {
           `${avgLatencyMs}ms`
         )}
       </p>
-      <p className="mt-2 text-xs text-gray-500">
+      <p className="mt-2 text-xs text-c-muted">
         {avgLatencyMs === null ? 'No data yet' : 'Average successful probe'}
       </p>
     </div>

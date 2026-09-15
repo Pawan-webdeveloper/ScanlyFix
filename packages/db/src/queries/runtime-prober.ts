@@ -187,32 +187,45 @@ export async function seedProberTargets(projectId: string, targets: NewProberTar
     .onConflictDoNothing(); // re-run safe — duplicate seed kuch nahi bigadega
 }
 
-export async function setBaseline(targetId: string, status: number): Promise<void> {
+export type CheckMeta = { verdict?: string | null; reason?: string | null };
+
+export async function setBaseline(targetId: string, status: number, meta: CheckMeta = {}): Promise<void> {
   await db
     .update(runtimeProberTargets)
-    .set({ baselineStatus: status, baselineAt: new Date(), lastCheckedAt: new Date(), lastActualStatus: status })
+    .set({
+      baselineStatus: status,
+      baselineAt: new Date(),
+      lastCheckedAt: new Date(),
+      lastActualStatus: status,
+      lastVerdict: meta.verdict ?? 'baseline_recorded',
+      lastReason: meta.reason ?? null,
+    })
     .where(eq(runtimeProberTargets.id, targetId));
 }
 
-export async function recordCheck(targetId: string, status: number): Promise<void> {
+export async function recordCheck(targetId: string, status: number, meta: CheckMeta = {}): Promise<void> {
   await db
     .update(runtimeProberTargets)
-    .set({ lastCheckedAt: new Date(), lastActualStatus: status })
+    .set({
+      lastCheckedAt: new Date(),
+      lastActualStatus: status,
+      ...(meta.verdict !== undefined ? { lastVerdict: meta.verdict } : {}),
+      ...(meta.reason !== undefined ? { lastReason: meta.reason } : {}),
+    })
     .where(eq(runtimeProberTargets.id, targetId));
 }
 
 // ── Findings ─────────────────────────────────────────────────
 
+export type ProberFindingVariant = 'anon_role' | 'exposed' | 'sequential_id' | null;
+
 export async function findUnresolvedFinding(
   projectId: string,
   path: string,
   method: string,
-  variant?: 'anon_role' | null,
+  variant?: ProberFindingVariant,
 ) {
-  const variantCondition =
-    variant === 'anon_role'
-      ? eq(runtimeProberFindings.variant, 'anon_role')
-      : isNull(runtimeProberFindings.variant);
+  const variantCondition = variant ? eq(runtimeProberFindings.variant, variant) : isNull(runtimeProberFindings.variant);
 
   const [row] = await db
     .select()
@@ -238,8 +251,11 @@ export async function insertFinding(input: {
   baselineStatus: number;
   actualStatus: number;
   severity: 'critical' | 'high';
-  variant?: 'anon_role' | null;
+  variant?: ProberFindingVariant;
   keyFingerprint?: string | null;
+  category?: string | null;
+  reason?: string | null;
+  evidence?: Record<string, unknown> | null;
 }) {
   const [row] = await db.insert(runtimeProberFindings).values(input).returning();
   return row;

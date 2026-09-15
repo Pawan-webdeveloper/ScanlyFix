@@ -1,6 +1,13 @@
 /**
  * "Needs a session" rule — CheckVibe ka exact idea:
  * real traffic lagbhag HAMESHA session ke saath aaya → route protected hai.
+ *
+ * NOTE ON `source`: these predicates answer "should this route drive an
+ * ACTION?", which is why sample traffic always answers no — seeded demo rows
+ * must never add a real prober target. For DISPLAY, classify the traffic
+ * honestly with classifyRoute() in ./classify.ts, which reports what the
+ * numbers say and keeps eligibility as a separate flag. A demo that shows
+ * nothing teaches nothing.
  */
 
 /** 5% tolerance — ek-ok-luck logged-out request false signal nahi banegi. */

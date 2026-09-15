@@ -66,7 +66,7 @@ export function AvailabilityTimeline({
         ))}
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+      <div className="mt-3 flex items-center justify-between text-xs text-c-muted">
         <span>{leftLabel}</span>
         <Legend
           outageCount={summary.outageCount}
@@ -128,7 +128,7 @@ function Legend({
           className="inline-block h-2.5 w-2.5 rounded-[2px]"
           style={{ backgroundColor: '#ef4444' }}
         />
-        Outage <strong className="font-semibold tabular-nums text-gray-700">{outageCount}</strong>
+        Outage <strong className="font-semibold tabular-nums text-c-ink">{outageCount}</strong>
       </span>
       <span className="flex items-center gap-1.5">
         <span
@@ -137,7 +137,7 @@ function Legend({
           style={{ backgroundColor: '#e9d5ff' }}
         />
         Today, still counting{' '}
-        <strong className="font-semibold tabular-nums text-gray-700">{todayCount}</strong>
+        <strong className="font-semibold tabular-nums text-c-ink">{todayCount}</strong>
       </span>
       <span className="flex items-center gap-1.5">
         <span
@@ -146,7 +146,7 @@ function Legend({
           style={{ backgroundColor: '#e5e7eb' }}
         />
         No checks{' '}
-        <strong className="font-semibold tabular-nums text-gray-700">{noChecksCount}</strong>
+        <strong className="font-semibold tabular-nums text-c-ink">{noChecksCount}</strong>
       </span>
     </div>
   )
@@ -157,23 +157,23 @@ function Tooltip({ day }: { day: UptimeDay | null }) {
   const dateLabel = formatShortDate(day.date)
   if (day.state === 'down') {
     return (
-      <p className="mt-2 text-xs text-gray-500" role="status">
-        <strong className="font-medium text-gray-900">{dateLabel}</strong> — {day.failed} failed
+      <p className="mt-2 text-xs text-c-muted" role="status">
+        <strong className="font-medium text-c-ink">{dateLabel}</strong> — {day.failed} failed
         checks · downtime ≈ {formatDowntime(day.downMs)}
       </p>
     )
   }
   if (day.state === 'ok') {
     return (
-      <p className="mt-2 text-xs text-gray-500" role="status">
-        <strong className="font-medium text-gray-900">{dateLabel}</strong> —{' '}
+      <p className="mt-2 text-xs text-c-muted" role="status">
+        <strong className="font-medium text-c-ink">{dateLabel}</strong> —{' '}
         {day.ok} check{day.ok === 1 ? '' : 's'} passed
       </p>
     )
   }
   return (
-    <p className="mt-2 text-xs text-gray-500" role="status">
-      <strong className="font-medium text-gray-900">{dateLabel}</strong> — no checks recorded
+    <p className="mt-2 text-xs text-c-muted" role="status">
+      <strong className="font-medium text-c-ink">{dateLabel}</strong> — no checks recorded
     </p>
   )
 }

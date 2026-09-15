@@ -79,3 +79,24 @@ export async function hasRuntimeAccess(viewer: Viewer, projectId: string): Promi
   const plan = planFor(context?.plan)
   return plan.id === 'pro' || plan.fullFindings || process.env.NODE_ENV !== 'production'
 }
+
+/**
+ * Who can see Live Threats.
+ *
+ * DELIBERATELY OPEN WHILE THE FEATURE IS BEING TESTED. Every signed-in owner of
+ * a project gets it, free plan included, because a detector nobody has pointed
+ * at real traffic has not been tested — and the only traffic that proves this
+ * one works is the internet hitting a live site.
+ *
+ * Ownership is still required: `getProject` resolves against the viewer, so
+ * this can never open one account's feed to another. To put it behind Pro
+ * later, this becomes the same one-line plan check `hasRuntimeAccess` performs;
+ * nothing that calls it has to change.
+ */
+export async function hasThreatAccess(viewer: Viewer, projectId: string): Promise<boolean> {
+  if (viewer.kind !== 'user') return false
+
+  const { getProject } = await import('@scanlyfix/db')
+  const project = await getProject(projectId, viewer)
+  return project !== null
+}

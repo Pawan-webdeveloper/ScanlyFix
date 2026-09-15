@@ -13,6 +13,7 @@ import { hasRuntimeAccess } from '@/lib/entitlements.ts'
 import { PageHeader } from '@/components/console/page-header.tsx'
 import { Icon } from '@/components/console/icons.tsx'
 import { ProberFindings } from '@/components/runtime/prober-findings.tsx'
+import { summarizeTargets } from '@/lib/runtime/auth-prober/summary.ts'
 import { ProberControls } from './probers/prober-controls.tsx'
 import { TargetManager } from './probers/target-manager.tsx'
 
@@ -103,6 +104,7 @@ export default async function RuntimePage({
   ])
 
   const hasBaseline = targets.some((t) => t.baselineStatus !== null)
+  const stats = summarizeTargets(targets, openCount)
 
   return (
     <div className="console min-h-dvh bg-c-bg text-c-ink">
@@ -150,8 +152,9 @@ export default async function RuntimePage({
                 <h2 className="text-base font-semibold text-c-ink">{activeProject.name}</h2>
               </div>
               <p className="mt-1 text-sm text-c-muted">
-                Nightly logged-out prober monitors sensitive routes. Flags pages that previously required login
-                (401/403/30x) but now respond with 200 OK.
+                Nightly logged-out prober for admin panels, APIs, debug endpoints and logged-in pages. Flags routes that
+                stopped requiring login, surfaces that were never protected, Supabase anon-key leaks and sequential-id
+                (IDOR) exposure — with evidence and a copy-paste fix prompt for each.
               </p>
               <div className="mt-3 flex items-center gap-2 text-xs">
                 {ctx?.anonKeyFingerprint ? (
@@ -179,6 +182,16 @@ export default async function RuntimePage({
           </div>
         </div>
 
+        {/* Summary tiles */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <StatTile label="Monitored" value={stats.total} />
+          <StatTile label="Protected" value={stats.protected} tone="good" />
+          <StatTile label="Open findings" value={stats.openFindings} tone={stats.openFindings > 0 ? 'bad' : 'good'} />
+          <StatTile label="Inconclusive" value={stats.inconclusive} tone="muted" />
+          <StatTile label="No baseline" value={stats.unbaselined} tone="muted" />
+          <StatTile label="Last probe" value={stats.lastCheckedAt ? relativeTime(stats.lastCheckedAt) : '—'} tone="muted" small />
+        </div>
+
         {/* Findings section */}
         <ProberFindings projectId={projectId} findings={findings} openCount={openCount} />
 
@@ -196,14 +209,52 @@ export default async function RuntimePage({
           <TargetManager projectId={projectId} targets={targets} findings={findings} />
 
           <p className="mt-4 border-t border-c-line/60 pt-3 text-[11px] text-c-muted">
-            * Note on dynamic routes: parameter placeholders (e.g. <code className="font-mono">[id]</code>,{' '}
-            <code className="font-mono">[slug]</code>) are probed with safe test values. Dynamic routes whose substituted ID
-            does not exist on your server return 404 (inconclusive) and produce no finding. This is by design to prevent false alarms.
+            * Dynamic routes: placeholders such as <code className="font-mono">[id]</code> and{' '}
+            <code className="font-mono">[slug]</code> are probed with safe test values; routes with an id placeholder are also
+            checked for sequential-id enumeration. A 200 that is really the sign-in form, a &ldquo;not found&rdquo; page or the
+            single-page-app shell is recognised from the body and never raises a finding — hover a verdict to see why.
           </p>
         </section>
       </div>
     </div>
   )
+}
+
+function StatTile({
+  label,
+  value,
+  tone = 'default',
+  small = false,
+}: {
+  label: string
+  value: number | string
+  tone?: 'default' | 'good' | 'bad' | 'muted'
+  small?: boolean
+}) {
+  const valueCls =
+    tone === 'good'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : tone === 'bad'
+        ? 'text-rose-600 dark:text-rose-400'
+        : tone === 'muted'
+          ? 'text-c-muted'
+          : 'text-c-ink'
+  return (
+    <div className="rounded-xl border border-c-line bg-c-card px-4 py-3 shadow-sm">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-c-muted">{label}</p>
+      <p className={`mt-1 font-mono font-semibold ${small ? 'text-sm' : 'text-xl'} ${valueCls}`}>{value}</p>
+    </div>
+  )
+}
+
+function relativeTime(date: Date): string {
+  const diffMs = Date.now() - date.getTime()
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
 }
 
 function ProjectSelector({

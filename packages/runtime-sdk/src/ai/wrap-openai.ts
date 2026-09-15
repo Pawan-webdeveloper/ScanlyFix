@@ -1,5 +1,6 @@
 import type { RuntimeClient } from '../runtime.ts';
 import { hashUserId } from './hash.ts';
+import { makeErrorEvent, makeSuccessEvent, safeReport } from './report.ts';
 import { estimateCostMicroUsd } from './pricing.ts';
 import { estimateProjectedCost, estimatePromptTokens } from './estimate.ts';
 import type { SpendFirewall } from './spend-firewall.ts';
@@ -28,27 +29,6 @@ type CallArgs = {
   max_completion_tokens?: number;
 };
 
-function makeEvent(params: {
-  model: string;
-  promptTokens: number;
-  completionTokens: number;
-  latencyMs: number;
-  userIdHash: string | null;
-}) {
-  const { model, promptTokens, completionTokens, latencyMs, userIdHash } = params;
-  return {
-    type: 'ai_call' as const,
-    provider: 'openai' as const,
-    model,
-    promptTokens,
-    completionTokens,
-    latencyMs,
-    // Server ingest par RECOMPUTE karega — client cost trust nahi (same pricing module dono taraf)
-    costMicroUsd: estimateCostMicroUsd(model, promptTokens, completionTokens),
-    userHash: userIdHash ?? undefined,
-  };
-}
-
 /**
  * Aapke client ka wrapper — proxy NAHI.
  * Key aapki process me, request seedha provider ko, humein sirf metadata.
@@ -69,9 +49,16 @@ export function wrapOpenAI<T extends OpenAIClientLike>(client: T, opts: AiGuardO
       messages: args.messages,
       maxOutputTokens: args.max_completion_tokens ?? args.max_tokens,
     });
-    await opts.firewall?.check(projected);
-
     const start = Date.now();
+    try {
+      // A refusal is the firewall doing its job, and the developer should be
+      // able to see how often it happens — so it is reported like any failure.
+      await opts.firewall?.check(projected);
+    } catch (e) {
+      safeReport(opts.runtime, makeErrorEvent({ provider: 'openai', model: args.model, latencyMs: Date.now() - start, userIdHash, error: e }));
+      throw e;
+    }
+
     try {
       // 2) STREAM: official include_usage — last chunk me usage. Chunks USER ko
       //    untouched milte hain; hum sirf padhte hain (watch-only, Guard ki tarah).
@@ -92,8 +79,10 @@ export function wrapOpenAI<T extends OpenAIClientLike>(client: T, opts: AiGuardO
       const res = (await original(rawArgs)) as { usage?: Usage; model?: string };
       const promptTokens = res.usage?.prompt_tokens ?? estimatePromptTokens(args.messages);
       const completionTokens = res.usage?.completion_tokens ?? 0;
-      opts.runtime.report(
-        makeEvent({
+      safeReport(
+        opts.runtime,
+        makeSuccessEvent({
+          provider: 'openai',
           model: res.model ?? args.model,
           promptTokens,
           completionTokens,
@@ -101,13 +90,13 @@ export function wrapOpenAI<T extends OpenAIClientLike>(client: T, opts: AiGuardO
           userIdHash,
         }),
       );
-      void opts.runtime.flush();
       // Exact cost < reserved? Extra reservation refund.
       const exact = estimateCostMicroUsd(args.model, promptTokens, completionTokens);
       if (exact < projected) await opts.firewall?.refund(projected - exact);
       return res;
     } catch (e) {
       await opts.firewall?.refund(projected); // provider error → ceiling lock-out nahi
+      safeReport(opts.runtime, makeErrorEvent({ provider: 'openai', model: args.model, latencyMs: Date.now() - start, userIdHash, error: e }));
       throw e;
     }
   };
@@ -128,6 +117,7 @@ async function* instrumentStream(
 ): AsyncGenerator<unknown> {
   let latencyMs = 0;
   let usage: Usage | undefined;
+  let failure: unknown = null;
   try {
     for await (const chunk of stream) {
       if (latencyMs === 0) latencyMs = Date.now() - ctx.latencyRef; // time-to-first-chunk
@@ -135,20 +125,35 @@ async function* instrumentStream(
       if (u) usage = u;
       yield chunk; // ⭐ chunk MEIN kuch nahi badla
     }
+  } catch (e) {
+    failure = e;
+    throw e;
   } finally {
     // ⭐ abandon ho ya complete — report + refund HAMESHA honge
     const promptTokens = usage?.prompt_tokens ?? ctx.fallbackPromptTokens;
     const completionTokens = usage?.completion_tokens ?? 0;
-    ctx.opts.runtime.report(
-      makeEvent({
+    const elapsed = latencyMs || Date.now() - ctx.latencyRef;
+
+    // A stream that broke mid-flight consumed tokens the provider will bill,
+    // so the successful part is still reported at its real cost; the failure
+    // is recorded as a separate zero-cost event so the error rate sees it.
+    safeReport(
+      ctx.opts.runtime,
+      makeSuccessEvent({
+        provider: 'openai',
         model: ctx.model,
         promptTokens,
         completionTokens,
-        latencyMs: latencyMs || Date.now() - ctx.latencyRef,
+        latencyMs: elapsed,
         userIdHash: ctx.userIdHash,
       }),
     );
-    void ctx.opts.runtime.flush();
+    if (failure !== null) {
+      safeReport(
+        ctx.opts.runtime,
+        makeErrorEvent({ provider: 'openai', model: ctx.model, latencyMs: elapsed, userIdHash: ctx.userIdHash, error: failure }),
+      );
+    }
     const exact = estimateCostMicroUsd(ctx.model, promptTokens, completionTokens);
     if (exact < ctx.reservedMicroUsd) await ctx.opts.firewall?.refund(ctx.reservedMicroUsd - exact);
   }

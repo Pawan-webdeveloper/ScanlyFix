@@ -136,13 +136,27 @@ export async function executeUptimeProbe({
     alertConfig = parsed.success ? parsed.data : null
   }
 
-  const method = alertConfig?.httpMethod ?? 'GET'
   const followRedirects = alertConfig?.followRedirects ?? true
   const customHeaders = alertConfig?.customHeaders
     ? prepareHeaders(alertConfig.customHeaders)
     : {}
   const needsBody = alertConfig?.keywordCheck !== undefined
   const maxBodyBytes = needsBody ? KEYWORD_CHECK_MAX_BODY_BYTES : 4096
+
+  /*
+   * The configured method, except where honouring it would break the check.
+   *
+   * This value was computed and then never passed to safeFetch, which had no
+   * `method` option at all — so a customer who chose HEAD in the monitor
+   * settings got a GET every minute regardless, and the dropdown was decoration.
+   *
+   * A keyword check overrides the choice rather than failing: HEAD responses
+   * carry no body, so the keyword could never be found and every check would
+   * report the site down. Silently sending GET is the behaviour the customer
+   * wanted; refusing to check their content because of a method they picked for
+   * bandwidth reasons is not.
+   */
+  const method: 'GET' | 'HEAD' = needsBody ? 'GET' : (alertConfig?.httpMethod ?? 'GET')
 
   // 2. Perform HTTP probe
   const startedAt = Date.now()
@@ -160,6 +174,7 @@ export async function executeUptimeProbe({
       maxBodyBytes,
       followRedirects,
       headers: customHeaders,
+      method,
     })
     const latencyMs = Date.now() - startedAt
     const statusCode = response.status

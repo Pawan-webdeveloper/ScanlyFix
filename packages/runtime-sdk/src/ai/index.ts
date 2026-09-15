@@ -17,4 +17,6 @@ export {
   type ModelPricing,
 } from './pricing.ts';
 export { estimateTokens, estimatePromptTokens, estimateProjectedCost } from './estimate.ts';
+export { classifyAiError, extractStatus, AI_ERROR_KINDS, type AiErrorKind } from './error-kind.ts';
+export { makeSuccessEvent, makeErrorEvent, safeReport, type AiProvider } from './report.ts';
 export { hashUserId } from './hash.ts';

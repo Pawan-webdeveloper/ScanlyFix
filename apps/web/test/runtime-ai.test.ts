@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { evaluateVelocity } from '../lib/runtime/ai-spend/velocity.ts';
-import { buildAiSummary, formatUsd, projectEndOfHourMicroUsd } from '../lib/runtime/ai-log/summary.ts';
+import { formatUsd, isFailedCall, isSampleCall, projectEndOfHourMicroUsd } from '../lib/runtime/ai-log/summary.ts';
+import { deriveAiStats, topUserSharePct } from '../lib/runtime/ai-log/stats.ts';
 
 // Mock DB queries for route testing
 vi.mock('@scanlyfix/db', () => ({
@@ -81,82 +82,55 @@ describe('AI Log Summary and Formatting', () => {
     expect(projected).toBe(2_000_000);
   });
 
-  it('builds summary and detects runaway loop (single user >80% share)', () => {
-    const calls = [
-      {
-        model: 'gpt-4o-mini',
-        promptTokens: 100,
-        completionTokens: 50,
-        latencyMs: 300,
-        costMicroUsd: 45,
-        userHash: 'user-a',
-        createdAt: new Date(),
-      },
-      {
-        model: 'gpt-4o',
-        promptTokens: 1000,
-        completionTokens: 500,
-        latencyMs: 1200,
-        costMicroUsd: 7500,
-        userHash: 'user-b',
-        createdAt: new Date(),
-      },
-    ];
+  it('derives headline numbers from SQL aggregates, not from the recent-call page', () => {
+    // The dashboard used to compute these in JavaScript from listRecentAiCalls,
+    // which is capped at 100 rows, and render the result under a correctly
+    // summed 24-hour cost — so a busy project was told it had made 100 calls.
+    const derived = deriveAiStats({
+      totalCalls: 5200,
+      errorCalls: 200,
+      totalCostMicroUsd: 7_545_000,
+      totalPromptTokens: 1_100_000,
+      totalCompletionTokens: 550_000,
+      p50LatencyMs: 320,
+      p95LatencyMs: 1800,
+      distinctUsers: 12,
+    });
 
-    const byModel = [
-      { model: 'gpt-4o', calls: 1, costMicroUsd: 7500 },
-      { model: 'gpt-4o-mini', calls: 1, costMicroUsd: 45 },
-    ];
-
-    const byUser = [
-      { userHash: 'user-b', calls: 1, costMicroUsd: 7500 },
-      { userHash: 'user-a', calls: 1, costMicroUsd: 45 },
-    ];
-
-    const summary = buildAiSummary({ calls, byModel, byUser });
-
-    expect(summary.totalCalls).toBe(2);
-    expect(summary.totalCostMicroUsd).toBe(7545);
-    expect(summary.totalTokensIn).toBe(1100);
-    expect(summary.totalTokensOut).toBe(550);
-    // user-b had 7500 / 7545 = ~99% of total spend -> runaway loop signal
-    expect(summary.topUserSharePct).toBeGreaterThanOrEqual(90);
+    expect(derived.totalCalls).toBe(5200);
+    expect(derived.successCalls).toBe(5000);
+    expect(derived.errorRatePct).toBe(4);
+    expect(derived.totalTokens).toBe(1_650_000);
+    expect(derived.avgCostPerCallMicroUsd).toBe(Math.round(7_545_000 / 5000));
+    expect(derived.avgTokensPerCall).toBe(330);
+    expect(derived.p95LatencyMs).toBe(1800);
   });
 
-  it('excludes source=sample calls from totalCost, totalCalls, and token counts in summary', () => {
-    const calls = [
-      {
-        model: 'gpt-4o-mini',
-        promptTokens: 100,
-        completionTokens: 50,
-        latencyMs: 300,
-        costMicroUsd: 45,
-        userHash: 'user-real',
-        source: null,
-        createdAt: new Date(),
-      },
-      {
-        model: 'gpt-4o',
-        promptTokens: 5000,
-        completionTokens: 2000,
-        latencyMs: 1500,
-        costMicroUsd: 35000,
-        userHash: 'usr_sample',
-        source: 'sample', // simulated sample call
-        createdAt: new Date(),
-      },
-    ];
+  it('flags a single caller holding almost all of the spend — the runaway-loop signal', () => {
+    const share = topUserSharePct([
+      { userHash: 'user-b', calls: 1, errors: 0, costMicroUsd: 7500 },
+      { userHash: 'user-a', calls: 1, errors: 0, costMicroUsd: 45 },
+    ]);
+    expect(share).toBeGreaterThanOrEqual(90);
+  });
 
-    const byModel = [{ model: 'gpt-4o-mini', calls: 1, costMicroUsd: 45 }];
-    const byUser = [{ userHash: 'user-real', calls: 1, costMicroUsd: 45 }];
+  it('ignores unattributed spend when computing the top caller share', () => {
+    expect(
+      topUserSharePct([
+        { userHash: null, calls: 40, errors: 0, costMicroUsd: 900_000 },
+        { userHash: 'user-a', calls: 1, errors: 0, costMicroUsd: 100 },
+      ]),
+    ).toBe(100);
+    expect(topUserSharePct([])).toBeNull();
+    expect(topUserSharePct([{ userHash: 'u', calls: 0, errors: 0, costMicroUsd: 0 }])).toBeNull();
+  });
 
-    const summary = buildAiSummary({ calls, byModel, byUser });
-
-    // The sample call ($0.035) should NOT be counted in totalCalls, totalCost, or token sums
-    expect(summary.totalCalls).toBe(1);
-    expect(summary.totalCostMicroUsd).toBe(45);
-    expect(summary.totalTokensIn).toBe(100);
-    expect(summary.totalTokensOut).toBe(50);
+  it('reads an absent status as success, because older SDK builds only reported successes', () => {
+    expect(isFailedCall({ status: null })).toBe(false);
+    expect(isFailedCall({ status: undefined })).toBe(false);
+    expect(isFailedCall({ status: 'error' })).toBe(true);
+    expect(isSampleCall({ source: 'sample' })).toBe(true);
+    expect(isSampleCall({ source: null })).toBe(false);
   });
 });
 
@@ -193,7 +167,9 @@ describe('Runtime Ingest Route with AI events', () => {
     expect(data.ok).toBe(true);
 
     expect(recordRouteEvents).toHaveBeenCalledWith('proj-123', [
-      { pattern: '/api/checkout', method: 'POST', kind: undefined, hasSession: true },
+      // `outcome` defaults to 'unknown': the SDK only sends a decision when one
+      // was actually observed, and the route never invents one.
+      { pattern: '/api/checkout', method: 'POST', kind: undefined, hasSession: true, outcome: 'unknown' },
     ]);
 
     expect(recordAiCallEvents).toHaveBeenCalledWith('proj-123', [

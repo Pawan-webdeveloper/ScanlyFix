@@ -1,330 +1,429 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+/**
+ * The canary engine, end to end against a real PostgREST-shaped server.
+ *
+ * This file used to drive the engine through a mocked `restSelect` and a queue
+ * of canned responses, which coupled every test to the exact number and order of
+ * HTTP calls: adding one request anywhere broke tests that had nothing to say
+ * about it. Worse, a mock of the HTTP function cannot check the things most
+ * likely to be wrong — the query strings, which key is used, how a count is
+ * read, or what a 404 on one table versus another actually does.
+ *
+ * So the database of the customer is a real HTTP server here, and only our own
+ * persistence layer is in memory.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getCanaryProjectConfigMock = vi.fn();
-const listCanariesMock = vi.fn();
-const updateCanaryStatusMock = vi.fn();
-const insertCanaryEventsMock = vi.fn();
-const markCanariesSetupMock = vi.fn();
-const hasRecentDuplicateEventMock = vi.fn();
+import { recordTrigger, startFakeSupabase, type FakeSupabase } from './support/fake-supabase.ts';
+
+// ── Our own storage, in memory ──────────────────────────────────────────────
+type CanaryRow = { id: string; markerToken: string; honeytokenPath: string; kind: string; status: string };
+type EventRow = { projectId: string; canaryId: string | null; kind: string; detail: string; source: string; at: number };
+
+const store = {
+  config: null as { supabaseUrl: string; serviceKey: string; anonKey: string | null; snapshot: unknown } | null,
+  canaries: [] as CanaryRow[],
+  events: [] as EventRow[],
+  snapshot: null as Record<string, unknown> | null,
+  statusWrites: [] as Array<{ marker: string; status: string; integrity: string }>,
+};
 
 vi.mock('@scanlyfix/db', () => ({
-  getCanaryProjectConfig: (...args: unknown[]) => getCanaryProjectConfigMock(...args),
-  listCanaries: (...args: unknown[]) => listCanariesMock(...args),
-  updateCanaryStatus: (...args: unknown[]) => updateCanaryStatusMock(...args),
-  insertCanaryEvents: (...args: unknown[]) => insertCanaryEventsMock(...args),
-  markCanariesSetup: (...args: unknown[]) => markCanariesSetupMock(...args),
-  hasRecentDuplicateEvent: (...args: unknown[]) => hasRecentDuplicateEventMock(...args),
+  getCanaryProjectConfig: async () => store.config,
+  listCanaries: async () => store.canaries.filter((c) => c.status !== 'retired'),
+  updateCanaryStatus: async (_p: string, marker: string, status: string, integrity: string) => {
+    store.statusWrites.push({ marker, status, integrity });
+    const row = store.canaries.find((c) => c.markerToken === marker);
+    if (row) row.status = status;
+  },
+  insertCanaryEvents: async (events: EventRow[]) => {
+    for (const e of events) store.events.push({ ...e, at: Date.now() });
+    return events.length;
+  },
+  markCanariesSetup: async (_p: string, snapshot: Record<string, unknown>) => {
+    store.snapshot = snapshot;
+  },
+  hasRecentDuplicateEvent: async (_p: string, kind: string, detail: string) =>
+    store.events.some((e) => e.kind === kind && e.detail === detail),
 }));
 
-vi.mock('@/lib/header-encryption', () => ({
-  decryptValue: vi.fn((v: string) => `decrypted_${v}`),
-}));
-
-const restSelectMock = vi.fn();
-vi.mock('@/lib/runtime/canaries/supabase-rest', () => ({
-  restSelect: (...args: unknown[]) => restSelectMock(...args),
-  listTableNames: vi.fn(),
-}));
+vi.mock('@/lib/header-encryption', () => ({ decryptValue: (v: string) => v }));
 
 import { runCanaryCheck } from '@/lib/runtime/canaries/engine';
 import { sha256Canonical } from '@/lib/runtime/canaries/integrity';
+import { SELFTEST_KIND } from '@/lib/runtime/canaries/types';
 
-describe('runCanaryCheck — credentials invalid & reachability handling (TASK 1)', () => {
-  const projectId = 'proj_test_123';
-  const existingSnapshot = {
-    payloadHashes: {
-      'CANARY::test::A': 'abc123hash',
-      'CANARY::test::B': 'def456hash',
-    },
-    logRowCount: 5,
-    takenAt: '2026-09-01T00:00:00.000Z',
-  };
+const PROJECT = 'proj_canary_live';
+const MARKERS = ['CANARY::proj1234::A', 'CANARY::proj1234::B', 'CANARY::proj1234::C'];
+const SELFTEST_MARKER = 'CANARY::proj1234::SELFTEST';
 
-  const plantedCanaries = [
-    { id: 'c1', markerToken: 'CANARY::test::A', status: 'planted' },
-    { id: 'c2', markerToken: 'CANARY::test::B', status: 'planted' },
+let fake: FakeSupabase | null = null;
+
+function connect(f: FakeSupabase, snapshot: unknown = null): void {
+  store.config = { supabaseUrl: f.url, serviceKey: f.state.serviceKey, anonKey: f.state.anonKey, snapshot };
+}
+
+async function boot(overrides: Parameters<typeof startFakeSupabase>[0] = {}): Promise<FakeSupabase> {
+  const f = await startFakeSupabase({
+    canaryRows: [
+      ...MARKERS.map((marker, i) => ({ marker, payload: { note: 'legacy integration backup', api_key: `sk-${i}` } })),
+      { marker: SELFTEST_MARKER, payload: { note: 'self test', nonce: 'initial' } },
+    ],
+    ...overrides,
+  });
+  store.canaries = [
+    ...MARKERS.map((m, i) => ({ id: `c${i}`, markerToken: m, honeytokenPath: `h${i}`, kind: 'vault', status: 'planted' })),
+    { id: 'cself', markerToken: SELFTEST_MARKER, honeytokenPath: 'hself', kind: SELFTEST_KIND, status: 'planted' },
   ];
+  return f;
+}
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    hasRecentDuplicateEventMock.mockResolvedValue(false);
-    getCanaryProjectConfigMock.mockResolvedValue({
-      projectId,
-      supabaseUrl: 'https://test-ref.supabase.co',
-      serviceKey: 'test_service_key',
-      anonKey: 'test_anon_key',
-      snapshot: existingSnapshot,
-    });
-    listCanariesMock.mockResolvedValue(plantedCanaries);
-  });
+/** A snapshot matching what the verify route writes after a successful setup. */
+function baselineSnapshot(f: FakeSupabase, lastLogId = 0): Record<string, unknown> {
+  const hashes: Record<string, string> = {};
+  for (const row of f.state.canaryRows) {
+    if (row.marker === SELFTEST_MARKER) continue;
+    // Mirrors sha256Canonical over the same payloads.
+    hashes[row.marker] = sha256Canonical(row.payload);
+  }
+  return { payloadHashes: hashes, logRowCount: f.state.logRows.length, lastLogId, takenAt: new Date().toISOString() };
+}
 
-  it('rowsRes status 401 with existing snapshot → zero detections, snapshot untouched', async () => {
-    // Supabase JWT expired or rotated → returns 401
-    restSelectMock.mockResolvedValueOnce({
-      status: 401,
-      ok: false,
-      data: null,
-      count: null,
-    });
+const kinds = (detections: Array<{ kind: string }>) => detections.map((d) => d.kind).sort();
+const summaryHasBrokenChain = (s: { detections: Array<{ kind: string }> }) => s.detections.some((d) => d.kind === 'watch_disabled');
 
-    const summary = await runCanaryCheck(projectId);
+beforeEach(() => {
+  store.config = null;
+  store.canaries = [];
+  store.events = [];
+  store.snapshot = null;
+  store.statusWrites = [];
+});
 
-    // 1. Must be marked unreachable
-    expect(summary.reachable).toBe(false);
+afterEach(async () => {
+  await fake?.close();
+  fake = null;
+});
 
-    // 2. ZERO detections (must NOT mark every canary as 'deleted')
-    expect(summary.detections).toHaveLength(0);
+describe('runCanaryCheck — a healthy database', () => {
+  it('reports nothing, records no event, and moves the baseline forward', async () => {
+    fake = await boot();
+    connect(fake, baselineSnapshot(fake));
 
-    // 3. Snapshot must NOT be refreshed / updated
-    expect(markCanariesSetupMock).not.toHaveBeenCalled();
-
-    // 4. No false events inserted
-    expect(insertCanaryEventsMock).not.toHaveBeenCalled();
-
-    // 5. Neutral 'unreachable' integrity set on canaries, preserving existing status
-    expect(updateCanaryStatusMock).toHaveBeenCalledWith(projectId, 'CANARY::test::A', 'planted', 'unreachable');
-    expect(updateCanaryStatusMock).toHaveBeenCalledWith(projectId, 'CANARY::test::B', 'planted', 'unreachable');
-    expect(summary.integrity['CANARY::test::A']).toBe('unreachable');
-    expect(summary.integrity['CANARY::test::B']).toBe('unreachable');
-  });
-
-  it('rowsRes status 403, 500, or 0 (timeout) → zero detections, snapshot untouched', async () => {
-    for (const errorStatus of [403, 500, 503, 0]) {
-      vi.clearAllMocks();
-      getCanaryProjectConfigMock.mockResolvedValue({
-        projectId,
-        supabaseUrl: 'https://test-ref.supabase.co',
-        serviceKey: 'test_service_key',
-        anonKey: 'test_anon_key',
-        snapshot: existingSnapshot,
-      });
-      listCanariesMock.mockResolvedValue(plantedCanaries);
-
-      restSelectMock.mockResolvedValueOnce({
-        status: errorStatus,
-        ok: false,
-        data: null,
-        count: null,
-      });
-
-      const summary = await runCanaryCheck(projectId);
-
-      expect(summary.reachable).toBe(false);
-      expect(summary.detections).toHaveLength(0);
-      expect(markCanariesSetupMock).not.toHaveBeenCalled();
-      expect(insertCanaryEventsMock).not.toHaveBeenCalled();
-      expect(summary.integrity['CANARY::test::A']).toBe('unreachable');
-    }
-  });
-
-  it('rowsRes status 404 → produces table_missing detection and leaves snapshot untouched', async () => {
-    restSelectMock.mockResolvedValueOnce({
-      status: 404,
-      ok: false,
-      data: null,
-      count: null,
-    });
-
-    const summary = await runCanaryCheck(projectId);
-
-    expect(summary.reachable).toBe(false);
-    expect(summary.detections).toHaveLength(1);
-    expect(summary.detections[0]?.kind).toBe('table_missing');
-    expect(insertCanaryEventsMock).toHaveBeenCalled();
-    expect(markCanariesSetupMock).not.toHaveBeenCalled();
-  });
-
-  it('rowsRes status 200 (ok) → evaluates integrity and refreshes snapshot if intact', async () => {
-    const notePayload = { note: 'legacy' };
-    const hash = sha256Canonical(notePayload);
-    getCanaryProjectConfigMock.mockResolvedValueOnce({
-      projectId,
-      supabaseUrl: 'https://test-ref.supabase.co',
-      serviceKey: 'test_service_key',
-      anonKey: 'test_anon_key',
-      snapshot: {
-        payloadHashes: {
-          'CANARY::test::A': hash,
-          'CANARY::test::B': hash,
-        },
-        logRowCount: 5,
-        takenAt: '2026-09-01T00:00:00.000Z',
-      },
-    });
-
-    // 1st call: rowsRes (select CANARY_TABLE)
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [
-        { marker: 'CANARY::test::A', payload: notePayload },
-        { marker: 'CANARY::test::B', payload: notePayload },
-      ],
-      count: null,
-    });
-    // 2nd call: logRes (select CANARY_LOG_TABLE)
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }],
-      count: 5,
-    });
-    // 3rd call: RLS probe (anon key select)
-    restSelectMock.mockResolvedValueOnce({
-      status: 401,
-      ok: false,
-      data: null,
-      count: null,
-    });
-
-    const summary = await runCanaryCheck(projectId);
+    const summary = await runCanaryCheck(PROJECT);
 
     expect(summary.reachable).toBe(true);
-    expect(markCanariesSetupMock).toHaveBeenCalled();
+    expect(summary.detections).toEqual([]);
+    expect(store.events).toEqual([]);
+    expect(store.snapshot).toBeTruthy();
+  });
+
+  it('proves the chain is armed by writing the self-test row and checking the trigger saw it', async () => {
+    fake = await boot();
+    connect(fake, baselineSnapshot(fake));
+
+    await runCanaryCheck(PROJECT);
+
+    const patchRequests = fake.requests.filter((r) => r.method === 'PATCH');
+    expect(patchRequests).toHaveLength(1);
+    expect(patchRequests[0]?.path).toContain(encodeURIComponent(SELFTEST_MARKER));
+    expect(patchRequests[0]?.key).toBe('service');
+
+    // The fake database fires its trigger the way the real one does, so the
+    // self-test finds its own entry and raises nothing.
+    expect(summaryHasBrokenChain(await runCanaryCheck(PROJECT))).toBe(false);
+  });
+
+  it('never reports its own self-test writes as an intrusion', async () => {
+    fake = await boot();
+    // The trigger logged the self-test's own write from a previous run.
+    recordTrigger(fake.state, { marker: SELFTEST_MARKER, action: 'UPDATE', oldPayload: {}, actedAt: '2026-09-15T02:30:00Z' });
+    connect(fake, baselineSnapshot(fake, 0));
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.filter((d) => d.kind === 'modified')).toEqual([]);
   });
 });
 
-describe('runCanaryCheck — nightly event dedupe (TASK 3)', () => {
-  const projectId = 'proj_dedupe_456';
-  const baselineHash = sha256Canonical({ note: 'original' });
-  const snapshot = {
-    payloadHashes: {
-      'CANARY::test::A': baselineHash,
-    },
-    logRowCount: 5,
-    takenAt: '2026-09-01T00:00:00.000Z',
-  };
-  const canaries = [{ id: 'canary_1', markerToken: 'CANARY::test::A', status: 'planted' }];
+describe('runCanaryCheck — the trigger log is the evidence', () => {
+  it('reports a modify-then-restore that the payload hashes cannot see', async () => {
+    fake = await boot();
+    const snapshot = baselineSnapshot(fake);
+    // The attacker changed row A and put it back. Current state is identical…
+    recordTrigger(fake.state, { marker: MARKERS[0]!, action: 'UPDATE', oldPayload: {}, actedAt: '2026-09-15T14:00:00Z' });
+    recordTrigger(fake.state, { marker: MARKERS[0]!, action: 'UPDATE', oldPayload: {}, actedAt: '2026-09-15T14:05:00Z' });
+    connect(fake, snapshot);
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    getCanaryProjectConfigMock.mockResolvedValue({
-      projectId,
-      supabaseUrl: 'https://test-ref.supabase.co',
-      serviceKey: 'test_service_key',
-      anonKey: null,
-      snapshot,
-    });
-    listCanariesMock.mockResolvedValue(canaries);
+    const summary = await runCanaryCheck(PROJECT);
+
+    // …but the log proves it happened, twice, with the times.
+    const logDetections = summary.detections.filter((d) => d.source === 'trigger_log');
+    expect(logDetections).toHaveLength(2);
+    expect(logDetections[0]?.kind).toBe('modified');
+    expect(logDetections[0]?.occurredAt).toBe('2026-09-15T14:00:00Z');
+    expect(logDetections[0]?.detail).toContain('14:00');
+    expect(logDetections[0]?.canaryId).toBe('c0');
   });
 
-  it('same modified-row detection on two consecutive runs → 1 event row total, email hook called once', async () => {
-    const emailHook = vi.fn();
+  it('distinguishes a delete from a modification using the operation the trigger recorded', async () => {
+    fake = await boot();
+    const snapshot = baselineSnapshot(fake);
+    recordTrigger(fake.state, { marker: MARKERS[1]!, action: 'DELETE', oldPayload: {}, actedAt: '2026-09-15T03:00:00Z' });
+    fake.state.canaryRows = fake.state.canaryRows.filter((r) => r.marker !== MARKERS[1]);
+    connect(fake, snapshot);
 
-    // Helper simulating runner (e.g. nightly Inngest job)
-    const runJob = async () => {
-      const summary = await runCanaryCheck(projectId);
-      if (summary.detections.length > 0) {
-        emailHook(summary.detections);
-      }
-      return summary;
-    };
-
-    const tamperedPayload = { note: 'ATTACKER_EDIT' };
-
-    // ─── RUN 1: First time detection ─────────────────────────────
-    // Mock REST response: modified row
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [{ marker: 'CANARY::test::A', payload: tamperedPayload }],
-      count: null,
-    });
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [{ id: 1 }],
-      count: 5,
-    });
-    // hasRecentDuplicateEvent returns false (never seen before)
-    hasRecentDuplicateEventMock.mockResolvedValueOnce(false);
-
-    const summary1 = await runJob();
-
-    // Run 1 checks:
-    expect(summary1.detections).toHaveLength(1);
-    expect(summary1.detections[0]?.kind).toBe('modified');
-    expect(insertCanaryEventsMock).toHaveBeenCalledTimes(1);
-    expect(emailHook).toHaveBeenCalledTimes(1);
-    expect(markCanariesSetupMock).not.toHaveBeenCalled(); // Tampered state must not become new baseline!
-
-    // ─── RUN 2: Consecutive run (within 24h) ──────────────────────
-    // Row is still modified in user's database
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [{ marker: 'CANARY::test::A', payload: tamperedPayload }],
-      count: null,
-    });
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [{ id: 1 }],
-      count: 5,
-    });
-    // hasRecentDuplicateEvent now returns true (duplicate within window)
-    hasRecentDuplicateEventMock.mockResolvedValueOnce(true);
-
-    const summary2 = await runJob();
-
-    // Run 2 checks:
-    expect(summary2.detections).toHaveLength(0); // Filtered out / suppressed!
-    // Total insertCanaryEventsMock calls across BOTH runs remains 1!
-    expect(insertCanaryEventsMock).toHaveBeenCalledTimes(1);
-    // Total emailHook calls across BOTH runs remains 1!
-    expect(emailHook).toHaveBeenCalledTimes(1);
-    expect(markCanariesSetupMock).not.toHaveBeenCalled();
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.kind === 'deleted' && d.source === 'trigger_log')).toBe(true);
+    // One touch, one event: the state comparison does not double-report it.
+    expect(summary.detections.filter((d) => d.marker === MARKERS[1])).toHaveLength(1);
   });
 
-  it('partially duplicate batch: keeps new detections and filters duplicates', async () => {
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [
-        { marker: 'CANARY::test::A', payload: { note: 'modified_A' } },
-        { marker: 'CANARY::test::B', payload: { note: 'modified_B' } },
-      ],
-      count: null,
-    });
-    restSelectMock.mockResolvedValueOnce({
-      status: 200,
-      ok: true,
-      data: [],
-      count: 5,
-    });
+  it('advances the watermark so the same log rows are never reported twice', async () => {
+    fake = await boot();
+    recordTrigger(fake.state, { marker: MARKERS[0]!, action: 'UPDATE', oldPayload: {}, actedAt: '2026-09-15T14:00:00Z' });
+    connect(fake, baselineSnapshot(fake));
 
-    getCanaryProjectConfigMock.mockResolvedValueOnce({
-      projectId,
-      supabaseUrl: 'https://test-ref.supabase.co',
-      serviceKey: 'test_service_key',
-      anonKey: null,
-      snapshot: {
-        payloadHashes: {
-          'CANARY::test::A': 'old_hash_A',
-          'CANARY::test::B': 'old_hash_B',
-        },
-        logRowCount: 5,
-        takenAt: '2026-09-01T00:00:00.000Z',
-      },
-    });
+    const first = await runCanaryCheck(PROJECT);
+    expect(first.detections.filter((d) => d.source === 'trigger_log')).toHaveLength(1);
 
-    listCanariesMock.mockResolvedValueOnce([
-      { id: 'c1', markerToken: 'CANARY::test::A', status: 'planted' },
-      { id: 'c2', markerToken: 'CANARY::test::B', status: 'planted' },
-    ]);
+    connect(fake, store.snapshot);
+    const second = await runCanaryCheck(PROJECT);
+    expect(second.detections.filter((d) => d.source === 'trigger_log')).toEqual([]);
+  });
 
-    // A is duplicate (true), B is new (false)
-    hasRecentDuplicateEventMock.mockImplementation(async (_pid: string, _kind: string, detail: string) => {
-      return detail.includes('CANARY::test::A');
-    });
+  it('summarises rather than inserting a row each when an intruder writes in a loop', async () => {
+    fake = await boot();
+    const snapshot = baselineSnapshot(fake);
+    for (let i = 0; i < 60; i++) {
+      recordTrigger(fake.state, { marker: MARKERS[0]!, action: 'UPDATE', oldPayload: {}, actedAt: `2026-09-15T14:${String(i).padStart(2, '0')}:00Z` });
+    }
+    connect(fake, snapshot);
 
-    const summary = await runCanaryCheck(projectId);
+    const summary = await runCanaryCheck(PROJECT);
+    const logDetections = summary.detections.filter((d) => d.source === 'trigger_log');
+    // Capped, and the overflow is stated rather than dropped silently.
+    expect(logDetections.length).toBeLessThanOrEqual(26);
+    expect(logDetections.some((d) => /further decoy-row writes/.test(d.detail))).toBe(true);
+  });
 
-    // Only B should be in summary.detections and inserted
-    expect(summary.detections).toHaveLength(1);
-    expect(summary.detections[0]?.detail).toContain('CANARY::test::B');
-    expect(insertCanaryEventsMock).toHaveBeenCalledWith([
-      expect.objectContaining({ detail: expect.stringContaining('CANARY::test::B') }),
-    ]);
+  it('reports a log that shrank as someone covering their tracks', async () => {
+    fake = await boot();
+    for (let i = 0; i < 5; i++) {
+      recordTrigger(fake.state, { marker: MARKERS[0]!, action: 'UPDATE', oldPayload: {}, actedAt: '2026-09-15T01:00:00Z' });
+    }
+    const snapshot = { ...baselineSnapshot(fake, 99), logRowCount: 12 };
+    connect(fake, snapshot);
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.kind === 'log_wiped')).toBe(true);
+  });
+});
+
+describe('runCanaryCheck — state comparison', () => {
+  it('reports a payload that changed with no log entry, which means the trigger was bypassed', async () => {
+    fake = await boot();
+    const snapshot = baselineSnapshot(fake);
+    fake.state.canaryRows = fake.state.canaryRows.map((r) =>
+      r.marker === MARKERS[0] ? { ...r, payload: { note: 'tampered' } } : r,
+    );
+    connect(fake, snapshot);
+
+    const summary = await runCanaryCheck(PROJECT);
+    const detection = summary.detections.find((d) => d.kind === 'modified');
+    expect(detection?.source).toBe('integrity');
+    expect(detection?.marker).toBe(MARKERS[0]);
+    expect(detection?.canaryId).toBe('c0');
+    expect(store.statusWrites).toContainEqual({ marker: MARKERS[0]!, status: 'compromised', integrity: 'modified' });
+  });
+
+  it('still compares payloads on a snapshot written before the log watermark existed', async () => {
+    fake = await boot();
+    const legacy = baselineSnapshot(fake);
+    delete legacy.lastLogId; // exactly what older snapshots look like
+    fake.state.canaryRows = fake.state.canaryRows.map((r) =>
+      r.marker === MARKERS[0] ? { ...r, payload: { note: 'tampered' } } : r,
+    );
+    connect(fake, legacy);
+
+    // Treating a missing watermark as "no snapshot" would rebaseline the
+    // tampered row and lose the detection permanently.
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.kind === 'modified')).toBe(true);
+  });
+
+  it('looks for a marker the snapshot forgot, because the canaries table is the roster', async () => {
+    fake = await boot();
+    const snapshot = baselineSnapshot(fake);
+    delete (snapshot.payloadHashes as Record<string, string>)[MARKERS[2]!];
+    fake.state.canaryRows = fake.state.canaryRows.filter((r) => r.marker !== MARKERS[2]);
+    connect(fake, snapshot);
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.kind === 'deleted' && d.marker === MARKERS[2])).toBe(true);
+  });
+});
+
+describe('runCanaryCheck — when the detector itself is broken', () => {
+  it('says so when the decoy table is gone, and stops showing the rows as healthy', async () => {
+    fake = await boot({ canaryTableExists: false });
+    connect(fake, null);
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(kinds(summary.detections)).toContain('table_missing');
+    expect(store.statusWrites.every((w) => w.status === 'compromised' && w.integrity === 'missing')).toBe(true);
+    expect(store.snapshot).toBeNull();
+  });
+
+  it('says so when the database cannot be reached, instead of reporting all quiet', async () => {
+    fake = await boot({ failWith: { status: 503, times: 99 } });
+    connect(fake, null);
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.reachable).toBe(false);
+    expect(kinds(summary.detections)).toContain('unreachable');
+    // Nothing is judged and the baseline is untouched.
+    expect(store.snapshot).toBeNull();
+    expect(store.statusWrites.every((w) => w.integrity === 'unreachable')).toBe(true);
+  });
+
+  it('says so when there is no usable connection at all', async () => {
+    store.config = null;
+    const summary = await runCanaryCheck(PROJECT);
+    expect(kinds(summary.detections)).toEqual(['watch_disabled']);
+    expect(store.events).toHaveLength(1);
+  });
+});
+
+describe('runCanaryCheck — the self-test proves the chain is armed', () => {
+  it('reports a dropped trigger, which otherwise looks exactly like a quiet night', async () => {
+    // The decoy rows are intact and the log has not shrunk, so every other
+    // signal says "all clear". Only writing to the table and finding that the
+    // trigger recorded nothing can tell the difference.
+    fake = await boot({ triggerDisabled: true });
+    connect(fake, baselineSnapshot(fake));
+
+    const summary = await runCanaryCheck(PROJECT);
+
+    const broken = summary.detections.find((d) => d.kind === 'watch_disabled');
+    expect(broken).toBeTruthy();
+    expect(broken?.detail).toMatch(/trigger recorded nothing/i);
+    expect(broken?.canaryId).toBe('cself');
+  });
+
+  it('reports a log table that can no longer be read', async () => {
+    fake = await boot();
+    connect(fake, baselineSnapshot(fake));
+    // The decoy table answers perfectly; only the log table is gone.
+    fake.state.logTableExists = false;
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.kind === 'watch_disabled')).toBe(true);
+  });
+
+  it('stays silent when the chain responds, and never bills its own write as an intrusion', async () => {
+    fake = await boot();
+    connect(fake, baselineSnapshot(fake));
+
+    const first = await runCanaryCheck(PROJECT);
+    expect(first.detections).toEqual([]);
+
+    // Second run, carrying the snapshot the first one wrote: the self-test's own
+    // log row from run one is inside the window and must not be reported.
+    connect(fake, store.snapshot);
+    const second = await runCanaryCheck(PROJECT);
+    expect(second.detections).toEqual([]);
+  });
+});
+
+describe('runCanaryCheck — anonymous access to the decoy table', () => {
+  it('reports a readable decoy table as an RLS hole', async () => {
+    fake = await boot({ anonReadable: { scanlyfix_canaries: 3 } });
+    connect(fake, baselineSnapshot(fake));
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.kind === 'anon_readable')).toBe(true);
+  });
+
+  it('treats an empty 200 as the policy working, not as a failure to read', async () => {
+    fake = await boot();
+    connect(fake, baselineSnapshot(fake));
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.kind === 'anon_readable')).toBe(false);
+    // The probe really did use the anon key.
+    expect(fake.requests.some((r) => r.key === 'anon')).toBe(true);
+  });
+
+  it('skips both anon probes entirely when no anon key is connected', async () => {
+    fake = await boot();
+    store.config = { supabaseUrl: fake.url, serviceKey: fake.state.serviceKey, anonKey: null, snapshot: baselineSnapshot(fake) };
+
+    await runCanaryCheck(PROJECT);
+    expect(fake.requests.some((r) => r.key === 'anon')).toBe(false);
+  });
+});
+
+describe('runCanaryCheck — anonymous WRITE access', () => {
+  it('reports a decoy table the anon role could insert into, which the read probe calls protected', async () => {
+    fake = await boot({ anonCanInsert: true });
+    connect(fake, baselineSnapshot(fake));
+
+    const summary = await runCanaryCheck(PROJECT);
+    const detection = summary.detections.find((d) => d.detail.includes('INSERT'));
+    expect(detection?.kind).toBe('anon_readable');
+    // The probe is non-destructive: it relies on a constraint rejecting the row.
+    expect(detection?.detail).toMatch(/No row was created/i);
+  });
+
+  it('says nothing when the policy refuses the write', async () => {
+    fake = await boot();
+    connect(fake, baselineSnapshot(fake));
+
+    const summary = await runCanaryCheck(PROJECT);
+    expect(summary.detections.some((d) => d.detail.includes('INSERT'))).toBe(false);
+    // It really did try, with the anon key.
+    expect(fake.requests.some((r) => r.method === 'POST' && r.key === 'anon')).toBe(true);
+  });
+});
+
+describe('runCanaryCheck — alert suppression', () => {
+  it('records a standing condition once, not on every run', async () => {
+    fake = await boot();
+    const snapshot = baselineSnapshot(fake);
+    fake.state.canaryRows = fake.state.canaryRows.map((r) =>
+      r.marker === MARKERS[0] ? { ...r, payload: { note: 'tampered' } } : r,
+    );
+    connect(fake, snapshot);
+
+    const first = await runCanaryCheck(PROJECT);
+    expect(first.detections).toHaveLength(1);
+    expect(store.events).toHaveLength(1);
+
+    // Same condition, same snapshot: the event is already on record.
+    connect(fake, snapshot);
+    const second = await runCanaryCheck(PROJECT);
+    expect(second.detections).toEqual([]);
+    expect(second.suppressed).toBe(1);
+    expect(store.events).toHaveLength(1);
+  });
+
+  it('keeps a genuinely new detection in a batch that also repeats an old one', async () => {
+    fake = await boot();
+    const snapshot = baselineSnapshot(fake);
+    fake.state.canaryRows = fake.state.canaryRows.map((r) =>
+      r.marker === MARKERS[0] ? { ...r, payload: { note: 'tampered' } } : r,
+    );
+    connect(fake, snapshot);
+    await runCanaryCheck(PROJECT);
+
+    // A second row is now tampered with as well.
+    fake.state.canaryRows = fake.state.canaryRows.map((r) =>
+      r.marker === MARKERS[1] ? { ...r, payload: { note: 'tampered too' } } : r,
+    );
+    connect(fake, snapshot);
+
+    const second = await runCanaryCheck(PROJECT);
+    expect(second.detections).toHaveLength(1);
+    expect(second.detections[0]?.marker).toBe(MARKERS[1]);
+    expect(second.suppressed).toBe(1);
   });
 });

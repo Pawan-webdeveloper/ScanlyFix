@@ -1,7 +1,17 @@
 import { and, desc, eq, gte, sql } from 'drizzle-orm';
 
 import { db } from '../client.ts';
+import {
+  aggregateRouteEvents,
+  routeEventKey,
+  type IngestRouteEvent,
+  type RouteEventTotals,
+  type RouteOutcome,
+} from './route-aggregation.ts';
 import { runtimeProberTargets, runtimeRouteStats, runtimeRoutes } from '../schema.ts';
+
+export { aggregateRouteEvents, routeEventKey };
+export type { IngestRouteEvent, RouteEventTotals, RouteOutcome };
 
 /** Raw aggregated row — aggregated counts for dashboard display and heuristic evaluation. */
 export type GuardRouteRow = {
@@ -14,6 +24,10 @@ export type GuardRouteRow = {
   lastSeenAt: Date;
   withSession: number;
   withoutSession: number;
+  /** Subset of withoutSession the wrapped middleware turned away (401/403/login redirect). */
+  withoutSessionBlocked: number;
+  /** Subset of withoutSession the wrapped middleware waved through. */
+  withoutSessionPassed: number;
 };
 
 export type GuardRoutesWindow =
@@ -115,6 +129,8 @@ export async function listGuardRoutes(
       lastSeenAt: runtimeRoutes.lastSeenAt,
       withSession: sql<number>`coalesce(sum(${runtimeRouteStats.withSession}), 0)::int`,
       withoutSession: sql<number>`coalesce(sum(${runtimeRouteStats.withoutSession}), 0)::int`,
+      withoutSessionBlocked: sql<number>`coalesce(sum(${runtimeRouteStats.withoutSessionBlocked}), 0)::int`,
+      withoutSessionPassed: sql<number>`coalesce(sum(${runtimeRouteStats.withoutSessionPassed}), 0)::int`,
     })
     .from(runtimeRoutes)
     .leftJoin(runtimeRouteStats, joinCondition)
@@ -157,22 +173,10 @@ export async function clearGuardRoutes(projectId: string): Promise<ClearRoutesRe
   });
 }
 
-export type IngestRouteEvent = {
-  pattern: string;
-  method: string;
-  kind?: string;
-  hasSession: boolean;
-};
-
 /**
- * Records a batch of route events — bulk approach: collapses 2N sequential
- * DB round-trips (old per-event loop) into 3 queries total regardless of
- * batch size.
- *
- * Steps:
- *   1. Bulk-upsert all route patterns in ONE INSERT … ON CONFLICT statement.
- *   2. Pre-aggregate session/no-session counts per routeId in memory.
- *   3. Bulk-upsert the resulting stats rows in ONE INSERT … ON CONFLICT.
+ * Records a batch of route events in three statements, regardless of batch
+ * size: one bulk upsert for the route patterns, an in-memory aggregation, and
+ * one bulk upsert for the hourly counters.
  */
 export async function recordRouteEvents(
   projectId: string,
@@ -180,23 +184,22 @@ export async function recordRouteEvents(
 ): Promise<number> {
   if (events.length === 0) return 0;
 
-  // Filter out malformed events up front.
-  const valid = events.filter((e) => e.pattern && e.method);
-  if (valid.length === 0) return 0;
+  const totals = aggregateRouteEvents(events);
+  if (totals.size === 0) return 0;
 
   const hour = new Date();
   hour.setUTCMinutes(0, 0, 0);
   const now = new Date();
 
-  // ── Step 1: Bulk-upsert all route patterns in ONE statement ──────────────
-  // On conflict we only update lastSeenAt. We do NOT overwrite `kind` because
-  // a route seen as 'server_action' must not be demoted to 'route' by a
-  // subsequent event on the same pattern.
-  const routeValues = valid.map((e) => ({
+  // ── Step 1: Bulk-upsert the route patterns ───────────────────────────────
+  // On conflict only lastSeenAt and source change. `kind` is never overwritten:
+  // a route seen as 'server_action' must not be demoted to 'route' by a later
+  // event on the same pattern.
+  const routeValues = Array.from(totals.values()).map((t) => ({
     projectId,
-    pattern: e.pattern,
-    method: e.method.toUpperCase(),
-    kind: e.kind ?? 'route',
+    pattern: t.pattern,
+    method: t.method,
+    kind: t.kind,
     source: null,
   }));
 
@@ -212,38 +215,25 @@ export async function recordRouteEvents(
     })
     .returning({ id: runtimeRoutes.id, pattern: runtimeRoutes.pattern, method: runtimeRoutes.method });
 
-  // Build a lookup: "PATTERN::METHOD" → routeId
-  const routeIdMap = new Map<string, string>();
-  for (const r of upsertedRoutes) {
-    routeIdMap.set(`${r.pattern}::${r.method}`, r.id);
-  }
+  const routeIdMap = new Map(upsertedRoutes.map((r) => [routeEventKey(r.pattern, r.method), r.id]));
 
-  // ── Step 2: Pre-aggregate counts per routeId in memory ───────────────────
-  // If the same pattern appears multiple times in the batch, their counts are
-  // summed here so the DB increment is a single add, not N separate updates.
-  const statAgg = new Map<string, { routeId: string; withSession: number; withoutSession: number }>();
-  for (const e of valid) {
-    const key = `${e.pattern}::${e.method.toUpperCase()}`;
-    const routeId = routeIdMap.get(key);
-    if (!routeId) continue;
-    const existing = statAgg.get(routeId) ?? { routeId, withSession: 0, withoutSession: 0 };
-    if (e.hasSession) {
-      existing.withSession += 1;
-    } else {
-      existing.withoutSession += 1;
-    }
-    statAgg.set(routeId, existing);
-  }
-
-  // ── Step 3: Bulk-upsert hourly stats in ONE statement ────────────────────
-  // `excluded` refers to the values that conflicted — Postgres adds them to
-  // the existing counters atomically.
-  const statValues = Array.from(statAgg.values()).map((s) => ({
-    routeId: s.routeId,
-    hour,
-    withSession: s.withSession,
-    withoutSession: s.withoutSession,
-  }));
+  // ── Step 2: Bulk-upsert the hourly counters ──────────────────────────────
+  // `excluded` refers to the conflicting values; Postgres adds them to the
+  // existing counters atomically.
+  const statValues = Array.from(totals.values()).flatMap((t) => {
+    const routeId = routeIdMap.get(routeEventKey(t.pattern, t.method));
+    if (!routeId) return [];
+    return [
+      {
+        routeId,
+        hour,
+        withSession: t.withSession,
+        withoutSession: t.withoutSession,
+        withoutSessionBlocked: t.withoutSessionBlocked,
+        withoutSessionPassed: t.withoutSessionPassed,
+      },
+    ];
+  });
 
   if (statValues.length > 0) {
     await db
@@ -254,61 +244,108 @@ export async function recordRouteEvents(
         set: {
           withSession: sql`${runtimeRouteStats.withSession} + excluded.with_session`,
           withoutSession: sql`${runtimeRouteStats.withoutSession} + excluded.without_session`,
+          withoutSessionBlocked: sql`${runtimeRouteStats.withoutSessionBlocked} + excluded.without_session_blocked`,
+          withoutSessionPassed: sql`${runtimeRouteStats.withoutSessionPassed} + excluded.without_session_passed`,
         },
       });
   }
 
-  return statAgg.size;
+  return statValues.length;
 }
 
-/** Seeds sample traffic events for dev testing and demonstration. */
-export async function seedDemoGuardRoutes(projectId: string): Promise<void> {
-  const demoRoutes: Array<{ pattern: string; method: string; kind: 'route' | 'server_action'; withSession: number; withoutSession: number }> = [
-    { pattern: '/dashboard', method: 'GET', kind: 'route', withSession: 54, withoutSession: 1 },
-    { pattern: '/dashboard/settings', method: 'GET', kind: 'route', withSession: 38, withoutSession: 0 },
-    { pattern: '/settings/billing', method: 'GET', kind: 'route', withSession: 29, withoutSession: 0 },
-    { pattern: '/api/projects', method: 'GET', kind: 'route', withSession: 42, withoutSession: 0 },
-    { pattern: '/api/scans', method: 'POST', kind: 'server_action', withSession: 26, withoutSession: 0 },
+/**
+ * Seeds sample traffic for demonstration.
+ *
+ * The rows are chosen to show every verdict the dashboard can render — an
+ * enforced surface, an inconsistently guarded one, a route with no middleware
+ * decision observed, a server action the prober cannot test, and genuinely
+ * public pages. They carry source='sample', which keeps them out of prober
+ * syncing and out of findings: a demo that invents security problems is worse
+ * than no demo.
+ *
+ * Written as two bulk statements rather than a per-row loop — the previous
+ * version issued 2 round-trips per route.
+ */
+export async function seedDemoGuardRoutes(projectId: string): Promise<number> {
+  type DemoRoute = {
+    pattern: string;
+    method: string;
+    kind: 'route' | 'server_action';
+    withSession: number;
+    withoutSession: number;
+    blocked?: number;
+    passed?: number;
+  };
+
+  const demoRoutes: DemoRoute[] = [
+    // Logged-in surfaces whose middleware turns anonymous visitors away.
+    { pattern: '/dashboard', method: 'GET', kind: 'route', withSession: 54, withoutSession: 12, blocked: 12 },
+    { pattern: '/dashboard/settings', method: 'GET', kind: 'route', withSession: 38, withoutSession: 4, blocked: 4 },
+    { pattern: '/settings/billing', method: 'GET', kind: 'route', withSession: 29, withoutSession: 2, blocked: 2 },
+    { pattern: '/api/projects', method: 'GET', kind: 'route', withSession: 42, withoutSession: 1, blocked: 1 },
+    // The interesting one: same route, two different answers.
+    { pattern: '/admin/users', method: 'GET', kind: 'route', withSession: 31, withoutSession: 9, blocked: 5, passed: 4 },
+    // A logged-in surface with no middleware decision observed at all.
     { pattern: '/api/user', method: 'GET', kind: 'route', withSession: 65, withoutSession: 0 },
+    // A mutation the nightly prober can never express.
+    { pattern: '/api/scans', method: 'POST', kind: 'server_action', withSession: 26, withoutSession: 0 },
+    // Genuinely public pages.
     { pattern: '/pricing', method: 'GET', kind: 'route', withSession: 4, withoutSession: 88 },
     { pattern: '/about', method: 'GET', kind: 'route', withSession: 2, withoutSession: 110 },
   ];
 
   const hour = new Date();
   hour.setUTCMinutes(0, 0, 0);
+  const now = new Date();
 
-  for (const item of demoRoutes) {
-    const [route] = await db
-      .insert(runtimeRoutes)
-      .values({
+  const routes = await db
+    .insert(runtimeRoutes)
+    .values(
+      demoRoutes.map((r) => ({
         projectId,
-        pattern: item.pattern,
-        method: item.method,
-        kind: item.kind,
+        pattern: r.pattern,
+        method: r.method,
+        kind: r.kind,
         source: 'sample',
-      })
-      .onConflictDoUpdate({
-        target: [runtimeRoutes.projectId, runtimeRoutes.pattern, runtimeRoutes.method],
-        set: { lastSeenAt: new Date() },
-      })
-      .returning({ id: runtimeRoutes.id });
+      })),
+    )
+    .onConflictDoUpdate({
+      target: [runtimeRoutes.projectId, runtimeRoutes.pattern, runtimeRoutes.method],
+      set: { lastSeenAt: now, source: 'sample' },
+    })
+    .returning({ id: runtimeRoutes.id, pattern: runtimeRoutes.pattern, method: runtimeRoutes.method });
 
-    if (!route) continue;
+  const routeIdMap = new Map(routes.map((r) => [`${r.pattern}::${r.method}`, r.id]));
 
-    await db
-      .insert(runtimeRouteStats)
-      .values({
-        routeId: route.id,
+  const statValues = demoRoutes.flatMap((r) => {
+    const routeId = routeIdMap.get(`${r.pattern}::${r.method}`);
+    if (!routeId) return [];
+    return [
+      {
+        routeId,
         hour,
-        withSession: item.withSession,
-        withoutSession: item.withoutSession,
-      })
-      .onConflictDoUpdate({
-        target: [runtimeRouteStats.routeId, runtimeRouteStats.hour],
-        set: {
-          withSession: sql`${runtimeRouteStats.withSession} + ${item.withSession}`,
-          withoutSession: sql`${runtimeRouteStats.withoutSession} + ${item.withoutSession}`,
-        },
-      });
-  }
+        withSession: r.withSession,
+        withoutSession: r.withoutSession,
+        withoutSessionBlocked: r.blocked ?? 0,
+        withoutSessionPassed: r.passed ?? 0,
+      },
+    ];
+  });
+
+  if (statValues.length === 0) return 0;
+
+  await db
+    .insert(runtimeRouteStats)
+    .values(statValues)
+    .onConflictDoUpdate({
+      target: [runtimeRouteStats.routeId, runtimeRouteStats.hour],
+      set: {
+        withSession: sql`excluded.with_session`,
+        withoutSession: sql`excluded.without_session`,
+        withoutSessionBlocked: sql`excluded.without_session_blocked`,
+        withoutSessionPassed: sql`excluded.without_session_passed`,
+      },
+    });
+
+  return demoRoutes.length;
 }

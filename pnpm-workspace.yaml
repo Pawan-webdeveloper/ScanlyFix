@@ -3,6 +3,7 @@ packages:
   - "packages/*"
 
 allowBuilds:
+  "@google/genai": true
   cpu-features: true
   esbuild: true
   msw: true

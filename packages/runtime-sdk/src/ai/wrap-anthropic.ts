@@ -1,5 +1,6 @@
 import type { RuntimeClient } from '../runtime.ts';
 import { hashUserId } from './hash.ts';
+import { makeErrorEvent, makeSuccessEvent, safeReport } from './report.ts';
 import { estimateCostMicroUsd } from './pricing.ts';
 import { estimateProjectedCost, estimatePromptTokens } from './estimate.ts';
 import type { SpendFirewall } from './spend-firewall.ts';
@@ -37,9 +38,19 @@ export function wrapAnthropic<T extends AnthropicClientLike>(client: T, opts: An
       system: args.system,
       maxOutputTokens: args.max_tokens,
     });
-    await opts.firewall?.check(projected);
-
     const start = Date.now();
+    try {
+      // A refusal is the firewall doing its job; the developer should be able
+      // to see how often it happens, so it is reported like any other failure.
+      await opts.firewall?.check(projected);
+    } catch (e) {
+      safeReport(
+        opts.runtime,
+        makeErrorEvent({ provider: 'anthropic', model: args.model, latencyMs: Date.now() - start, userIdHash, error: e }),
+      );
+      throw e;
+    }
+
     try {
       if (args.stream) {
         const stream = (await original(rawArgs)) as AsyncIterable<unknown>;
@@ -59,22 +70,26 @@ export function wrapAnthropic<T extends AnthropicClientLike>(client: T, opts: An
       };
       const promptTokens = res.usage?.input_tokens ?? estimatePromptTokens(args.messages, args.system);
       const completionTokens = res.usage?.output_tokens ?? 0;
-      opts.runtime.report({
-        type: 'ai_call',
-        provider: 'anthropic',
-        model: res.model ?? args.model,
-        promptTokens,
-        completionTokens,
-        latencyMs: Date.now() - start,
-        costMicroUsd: estimateCostMicroUsd(args.model, promptTokens, completionTokens),
-        userHash: userIdHash ?? undefined,
-      });
-      void opts.runtime.flush();
+      safeReport(
+        opts.runtime,
+        makeSuccessEvent({
+          provider: 'anthropic',
+          model: res.model ?? args.model,
+          promptTokens,
+          completionTokens,
+          latencyMs: Date.now() - start,
+          userIdHash,
+        }),
+      );
       const exact = estimateCostMicroUsd(args.model, promptTokens, completionTokens);
       if (exact < projected) await opts.firewall?.refund(projected - exact);
       return res;
     } catch (e) {
       await opts.firewall?.refund(projected);
+      safeReport(
+        opts.runtime,
+        makeErrorEvent({ provider: 'anthropic', model: args.model, latencyMs: Date.now() - start, userIdHash, error: e }),
+      );
       throw e;
     }
   };
@@ -96,6 +111,7 @@ async function* instrumentStream(
   let latencyMs = 0;
   let inTok = 0;
   let outTok = 0;
+  let failure: unknown = null;
   try {
     for await (const ev of stream) {
       if (latencyMs === 0) latencyMs = Date.now() - ctx.latencyRef;
@@ -109,20 +125,34 @@ async function* instrumentStream(
       if (e.type === 'message_delta') outTok = e.usage?.output_tokens ?? outTok;
       yield ev; // ⭐ events untouched
     }
+  } catch (e) {
+    failure = e;
+    throw e;
   } finally {
     // ⭐ abandon ho ya complete — report + refund HAMESHA honge
     const promptTokens = inTok || ctx.fallbackPromptTokens;
-    ctx.opts.runtime.report({
-      type: 'ai_call',
-      provider: 'anthropic',
-      model: ctx.model,
-      promptTokens,
-      completionTokens: outTok,
-      latencyMs: latencyMs || Date.now() - ctx.latencyRef,
-      costMicroUsd: estimateCostMicroUsd(ctx.model, promptTokens, outTok),
-      userHash: ctx.userIdHash ?? undefined,
-    });
-    void ctx.opts.runtime.flush();
+    const elapsed = latencyMs || Date.now() - ctx.latencyRef;
+
+    // A stream that broke mid-flight still consumed the tokens the provider
+    // will bill, so the delivered part is reported at its real cost and the
+    // failure is recorded separately at zero cost for the error rate.
+    safeReport(
+      ctx.opts.runtime,
+      makeSuccessEvent({
+        provider: 'anthropic',
+        model: ctx.model,
+        promptTokens,
+        completionTokens: outTok,
+        latencyMs: elapsed,
+        userIdHash: ctx.userIdHash,
+      }),
+    );
+    if (failure !== null) {
+      safeReport(
+        ctx.opts.runtime,
+        makeErrorEvent({ provider: 'anthropic', model: ctx.model, latencyMs: elapsed, userIdHash: ctx.userIdHash, error: failure }),
+      );
+    }
     const exact = estimateCostMicroUsd(ctx.model, promptTokens, outTok);
     if (exact < ctx.reservedMicroUsd) await ctx.opts.firewall?.refund(ctx.reservedMicroUsd - exact);
   }
