@@ -24,7 +24,7 @@ export default function ContactPage() {
 
       <div className="mt-12 flex flex-col gap-10">
         <section>
-          <h2 className="label text-ink">[ 01 ] Email</h2>
+          <h3 className="label text-ink">[ 01 ] Email</h3>
           <div className="mt-4 text-[15px] leading-relaxed text-pretty">
             <a
               className="link"
@@ -40,7 +40,7 @@ export default function ContactPage() {
         </section>
 
         <section>
-          <h2 className="label text-ink">[ 02 ] What to include</h2>
+          <h3 className="label text-ink">[ 02 ] What to include</h3>
           <div className="mt-4 text-[15px] leading-relaxed text-pretty">
             <ul className="list-inside list-disc text-muted">
               <li>Your account email (if you have one)</li>
@@ -52,7 +52,7 @@ export default function ContactPage() {
         </section>
 
         <section>
-          <h2 className="label text-ink">[ 03 ] Response times</h2>
+          <h3 className="label text-ink">[ 03 ] Response times</h3>
           <div className="mt-4 text-[15px] leading-relaxed text-pretty text-muted">
             <p>
               General queries: within one business day. Billing disputes:
