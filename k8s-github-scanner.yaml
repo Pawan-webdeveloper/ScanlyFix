@@ -15,6 +15,22 @@ stringData:
   token: "5f8450ec62babd2cd92cb558315341215e83ea6d40163f5e"
 
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-app-credentials
+  namespace: scanlyfix
+type: Opaque
+stringData:
+  # Replace with the real ScanlyFix GitHub App id and private key. The worker
+  # mints installation tokens itself and refuses to start without these.
+  app-id: "000000"
+  private-key: |
+    -----BEGIN RSA PRIVATE KEY-----
+    ...
+    -----END RSA PRIVATE KEY-----
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -47,6 +63,16 @@ spec:
             secretKeyRef:
               name: github-scanner-token
               key: token
+        - name: GITHUB_APP_ID
+          valueFrom:
+            secretKeyRef:
+              name: github-app-credentials
+              key: app-id
+        - name: GITHUB_APP_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: github-app-credentials
+              key: private-key
         resources:
           requests:
             cpu: 100m

@@ -37,10 +37,16 @@ describe('registered tool versions stay in sync with the Dockerfile pins', () =>
 describe('parseScanRequest', () => {
   const valid = { installationId: 42, owner: 'octocat', name: 'hello-world', defaultBranch: 'main' }
 
-  it('accepts a minimal valid request', () => {
+  it('accepts a minimal valid request, defaulting to shallow', () => {
     const result = parseScanRequest(valid)
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.value).toEqual(valid)
+    if (result.ok) expect(result.value).toEqual({ ...valid, profile: 'shallow' })
+  })
+
+  it('accepts a deep profile', () => {
+    const result = parseScanRequest({ ...valid, profile: 'deep' })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.profile).toBe('deep')
   })
 
   it('accepts and passes through a bounded historyDepth', () => {
@@ -55,8 +61,8 @@ describe('parseScanRequest', () => {
     if (result.ok) expect(result.value.historyDepth).toBe(MAX_HISTORY_DEPTH)
   })
 
-  it('ignores unknown fields like profile', () => {
-    const result = parseScanRequest({ ...valid, profile: { deep: true }, somethingElse: 1 })
+  it('ignores unknown fields', () => {
+    const result = parseScanRequest({ ...valid, somethingElse: 1 })
     expect(result.ok).toBe(true)
   })
 
@@ -73,6 +79,8 @@ describe('parseScanRequest', () => {
     ['defaultBranch', { ...valid, defaultBranch: null }],
     ['historyDepth', { ...valid, historyDepth: -1 }],
     ['historyDepth', { ...valid, historyDepth: 'deep' }],
+    ['profile', { ...valid, profile: 'full' }],
+    ['profile', { ...valid, profile: { deep: true } }],
   ])('rejects a bad %s', (_field, body) => {
     const result = parseScanRequest(body)
     expect(result.ok).toBe(false)

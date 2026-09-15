@@ -31,6 +31,7 @@ export async function cloneAndScan(
   name: string,
   defaultBranch: string,
   historyDepth?: number,
+  signal?: AbortSignal,
 ): Promise<CloneHandle> {
   const workDir = mkdtempSync(join(tmpdir(), 'scanlyfix-repo-'))
   const rootDir = join(workDir, 'repo')
@@ -40,11 +41,11 @@ export async function cloneAndScan(
     await pExecFile(
       'git',
       ['clone', '--depth', String(historyDepth ?? DEFAULT_HISTORY_DEPTH), '--branch', defaultBranch, '--single-branch', url, rootDir],
-      { timeout: CLONE_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024, killSignal: 'SIGKILL' },
+      { timeout: CLONE_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024, killSignal: 'SIGKILL', signal },
     )
 
-    const gitleaks = await runGitleaks(rootDir, join(workDir, 'gitleaks.json'))
-    const osv = await runOsv(rootDir)
+    const gitleaks = await runGitleaks(rootDir, join(workDir, 'gitleaks.json'), signal)
+    const osv = await runOsv(rootDir, signal)
 
     const context: RepoCloneContext = {
       rootDir,
@@ -63,24 +64,25 @@ export async function cloneAndScan(
   }
 }
 
-async function runGitleaks(rootDir: string, reportPath: string): Promise<GitleaksFinding[]> {
+async function runGitleaks(rootDir: string, reportPath: string, signal?: AbortSignal): Promise<GitleaksFinding[]> {
   await pExecFile(
     'gitleaks',
     ['git', '--source', rootDir, '--report-format', 'json', '--report-path', reportPath, '--no-banner', '--exit-code', '0'],
-    { timeout: TOOL_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024, killSignal: 'SIGKILL' },
+    { timeout: TOOL_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024, killSignal: 'SIGKILL', signal },
   )
   return parseGitleaks(readFileSync(reportPath, 'utf8'))
 }
 
-async function runOsv(rootDir: string): Promise<OsvFinding[]> {
+async function runOsv(rootDir: string, signal?: AbortSignal): Promise<OsvFinding[]> {
   // osv-scanner exits 1 when it finds vulnerabilities, so treat a non-zero exit
   // with stdout as a normal result, not a failure.
-  let stdout: string
+  let stdout = ''
   try {
     ;({ stdout } = await pExecFile('osv-scanner', ['scan', '--source', rootDir, '--format', 'json'], {
       timeout: TOOL_TIMEOUT_MS,
       maxBuffer: 64 * 1024 * 1024,
       killSignal: 'SIGKILL',
+      signal,
     }))
   } catch (error) {
     const out = (error as { stdout?: string }).stdout

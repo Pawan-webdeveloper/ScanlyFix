@@ -23,8 +23,12 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
+import { runRepoChecks } from '@scanlyfix/repo-checks'
 import { detectToolVersions, registeredToolVersions } from './tools.ts'
 import { parseScanRequest, type ScanRequest } from './request.ts'
+import { githubConfigured, mintInstallationToken } from './auth.ts'
+import { buildRepoApiContext } from './github.ts'
+import { cloneAndScan, type CloneHandle } from './deep.ts'
 
 const PORT = Number(process.env['PORT'] ?? 8081)
 const TOKEN = process.env['SCANLYFIX_REPO_SCANNER_TOKEN'] ?? ''
@@ -32,12 +36,23 @@ const TOKEN = process.env['SCANLYFIX_REPO_SCANNER_TOKEN'] ?? ''
 /** A clone + gitleaks + osv-scanner run is heavy; serialize them. */
 const MAX_CONCURRENT_SCANS = 1
 const MAX_BODY_BYTES = 8 * 1024
+/** Below the web executor's 5-minute HTTP cap, so we fail the scan before it does. */
+const SCAN_TIMEOUT_MS = 4 * 60_000
 
 if (!TOKEN) {
   console.error(
     'SCANLYFIX_REPO_SCANNER_TOKEN is not set. This service clones GitHub repositories and runs\n' +
       'secret/vulnerability scanners over them; without a shared secret anyone who can reach the\n' +
       'port can trigger scans and read the findings. Refusing to start.',
+  )
+  process.exit(1)
+}
+
+if (!githubConfigured()) {
+  console.error(
+    'GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are not set. This service mints its own GitHub App\n' +
+      'installation tokens to clone repositories; without them it cannot authenticate to GitHub.\n' +
+      'Refusing to start rather than accepting scans that will always fail.',
   )
   process.exit(1)
 }
@@ -101,24 +116,50 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 }
 
 /**
- * The scan seam. This build ships the worker shell and the pinned, checksummed
- * gitleaks/osv-scanner binaries, but not yet the GitHub App auth + bounded-clone
- * pipeline that feeds them (the plan's auth.ts / shallow.ts / deep.ts). Until
- * that lands a valid scan is answered 501 — an honest failure the executor
- * records as a `failed` scan — rather than empty findings that would read as
- * "clean repo".
+ * The scan seam: mint an installation token, assemble the shallow API context,
+ * add a bounded clone + gitleaks/osv for a deep scan, then run the repo checks
+ * and return their findings. A failure here is a non-2xx the web executor
+ * records as a `failed` scan; individual check failures ride back in `errors`.
  */
 async function runScan(request: ScanRequest): Promise<{ status: number; body: Record<string, unknown> }> {
-  console.log(`scan requested for ${request.owner}/${request.name} (pipeline not wired in this build)`)
-  return {
-    status: 501,
-    body: {
-      error:
-        'The github-scanner clone pipeline (GitHub App auth + gitleaks/osv-scanner over a bounded clone) ' +
-        'is not implemented in this build. The worker shell and pinned toolchain are in place.',
-      findings: [],
-      errors: [],
-    },
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SCAN_TIMEOUT_MS)
+  timer.unref()
+
+  try {
+    return await scan(request, controller.signal)
+  } catch (error) {
+    console.error(`scan ${request.owner}/${request.name} failed`, error)
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      status: controller.signal.aborted ? 504 : 502,
+      body: { error: message, findings: [], errors: [] },
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function scan(request: ScanRequest, signal: AbortSignal): Promise<{ status: number; body: Record<string, unknown> }> {
+  const token = await mintInstallationToken(request.installationId)
+  const api = await buildRepoApiContext(token, request.owner, request.name, request.defaultBranch)
+
+  let clone: CloneHandle | undefined
+  if (request.profile === 'deep') {
+    clone = await cloneAndScan(token, request.owner, request.name, request.defaultBranch, request.historyDepth, signal)
+  }
+
+  try {
+    const { findings, errors } = await runRepoChecks({
+      owner: request.owner,
+      name: request.name,
+      defaultBranch: request.defaultBranch,
+      api,
+      clone: clone?.context,
+    })
+    return { status: 200, body: { findings, errors } }
+  } finally {
+    clone?.cleanup()
   }
 }
 
