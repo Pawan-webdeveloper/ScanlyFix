@@ -35,17 +35,16 @@ const siteUrl =
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'ScanlyFix — everything wrong with your website, and the prompt that fixes it',
+    default: 'ScanlyFix — Find & Fix everything wrong with your website',
     template: '%s · ScanlyFix',
   },
   description:
-    'Paste a URL and get 63 read-only checks across security, SEO, AI answer engines, performance, ' +
-    'accessibility and compliance — each with the evidence observed and a fix prompt for your AI ' +
-    'coding agent. Scanning is free.',
+    'Free website security scanner. Check for vulnerabilities, SEO issues, and AI visibility in 60 seconds. ' +
+    'No signup required. Every finding comes with a fix prompt.',
   openGraph: {
     type: 'website',
     siteName: 'ScanlyFix',
-    title: 'Everything wrong with your website — and the prompt that fixes it',
+    title: 'Find & Fix everything wrong with your website',
     description:
       '63 read-only checks across security, SEO, AI answer engines, performance, accessibility and ' +
       'compliance. Every finding shows the evidence behind it.',
