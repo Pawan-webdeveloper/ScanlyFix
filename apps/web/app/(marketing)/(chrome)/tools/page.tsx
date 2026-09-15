@@ -70,16 +70,16 @@ export default function ToolsPage() {
           <p className="mt-1 text-sm text-muted">Check Supabase backends</p>
         </Link>
       </div>
+
+      <p className="mt-8 text-muted">
+        Compare scanners on our{' '}
+        <Link href="/compare/scanners" className="link">
+          comparison page
+        </Link>
+        .
+      </p>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
-
-    <p className="mt-8 text-muted">
-      Compare scanners on our{' '}
-      <Link href="/compare/scanners" className="link">
-        comparison page
-      </Link>
-      .
-    </p>
-
-    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
   )
 }

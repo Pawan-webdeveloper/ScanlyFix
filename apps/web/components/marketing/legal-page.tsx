@@ -53,7 +53,7 @@ export function Clause({
       <h3 className="label text-ink">
         {`[ ${String(index).padStart(2, '0')} ] `}
         {heading}
-      </h2>
+      </h3>
       <div className="mt-4 flex flex-col gap-4 text-[15px] leading-relaxed text-pretty">
         {children}
       </div>
