@@ -19,6 +19,7 @@ import {
   githubRepos,
   type GithubInstallation,
   type GithubRepo,
+  type InstallationStatus,
   type NewGithubInstallation,
   type NewGithubRepo,
 } from '../schema.ts'
@@ -58,21 +59,23 @@ export async function upsertInstallation(
     where: eq(githubInstallations.installationId, input.installationId),
   })
   if (existing) {
-    if (existing.userId !== viewer.userId) {
-      const [updated] = await db
-        .update(githubInstallations)
-        .set({
-          userId: viewer.userId,
-          // The account the grant actually belongs to, refreshed from GitHub
-          // in case the same installation was reached through a rename.
-          accountLogin: input.accountLogin,
-          accountType: input.accountType,
-        })
-        .where(eq(githubInstallations.id, existing.id))
-        .returning()
-      return updated ?? existing
-    }
-    return existing
+    /*
+     * A fresh install or `created` webhook is a "still active" signal, so the
+     * status resets here even when the row already exists. Ownership still
+     * follows whoever JUST completed the install (see the reassignment note
+     * above), and account fields refresh from GitHub on the same update.
+     */
+    const [updated] = await db
+      .update(githubInstallations)
+      .set({
+        ...(existing.userId !== viewer.userId ? { userId: viewer.userId } : {}),
+        accountLogin: input.accountLogin,
+        accountType: input.accountType,
+        status: 'active',
+      })
+      .where(eq(githubInstallations.id, existing.id))
+      .returning()
+    return updated ?? existing
   }
   const row: NewGithubInstallation = {
     userId: viewer.userId,
@@ -227,6 +230,22 @@ export async function getInstallationByGithubId(
     where: eq(githubInstallations.installationId, installationId),
   })
   return row ?? null
+}
+
+/**
+ * Set an installation's health by GitHub's numeric id, without a Viewer. The
+ * suspend/unsuspend webhooks are the callers: they know the installation but
+ * never an application user, and they should update the row even when the
+ * callback that would have attached a user never ran.
+ */
+export async function setInstallationStatusByGithubId(
+  installationId: number,
+  status: InstallationStatus,
+): Promise<void> {
+  await db
+    .update(githubInstallations)
+    .set({ status })
+    .where(eq(githubInstallations.installationId, installationId))
 }
 
 /**

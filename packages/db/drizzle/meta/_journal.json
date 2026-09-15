@@ -190,6 +190,13 @@
       "when": 1789214843000,
       "tag": "0026_canary_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1789459113788,
+      "tag": "0028_installation_status",
+      "breakpoints": true
     }
   ]
 }

@@ -5,8 +5,10 @@ import {
   deleteReposByGithubIds,
   getInstallationByGithubId,
   listReposForViewer,
+  setInstallationStatusByGithubId,
   upsertInstallation,
   upsertRepo,
+  type InstallationStatus,
   type Viewer,
 } from '@scanlyfix/db'
 import { listInstallationRepos, verifyWebhookSignature, type InstallationRepo } from '@/lib/github-app.ts'
@@ -67,6 +69,12 @@ export async function POST(request: Request) {
         break
       case 'installation.deleted':
         await handleDelete(event)
+        break
+      case 'installation.suspend':
+        await handleStatusChange(event, 'suspended')
+        break
+      case 'installation.unsuspend':
+        await handleStatusChange(event, 'active')
         break
       case 'installation.repositories.removed':
         await handleRepoRemoved(event)
@@ -135,6 +143,15 @@ async function handleDelete(event: WebhookPayload): Promise<void> {
   const installationId = event.installation?.id
   if (!installationId) return
   await deleteInstallationByGithubId(installationId)
+}
+
+async function handleStatusChange(
+  event: WebhookPayload,
+  status: InstallationStatus,
+): Promise<void> {
+  const installationId = event.installation?.id
+  if (!installationId) return
+  await setInstallationStatusByGithubId(installationId, status)
 }
 
 async function handleRepoRemoved(event: WebhookPayload): Promise<void> {

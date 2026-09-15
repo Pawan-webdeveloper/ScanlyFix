@@ -24,6 +24,17 @@ export async function GET(request: Request) {
   const setupAction = url.searchParams.get('setup_action')
   const next = url.searchParams.get('next') ?? '/feed'
 
+  /*
+   * An org owner has to approve the install before GitHub mints an
+   * installation. That callback carries `setup_action=request` and NO
+   * installation_id — the installation does not exist yet, so there is nothing
+   * to record here. The eventual approval arrives later as an
+   * `installation.created` webhook, not a second trip through this route.
+   */
+  if (setupAction === 'request') {
+    return NextResponse.redirect(new URL('/feed?notice=github-request-pending', url.origin))
+  }
+
   if (!installationIdRaw) return fail('missing-installation', 400, url.origin, next)
 
   // An OAuth `code` beside installation_id means the GitHub App still has
@@ -117,8 +128,10 @@ export async function GET(request: Request) {
       return NextResponse.redirect(login)
     }
 
-    const destination = new URL('/feed#repositories', url.origin)
-    if (setupAction) destination.searchParams.set('setup_action', setupAction)
+    const destination =
+      setupAction === 'update'
+        ? new URL('/feed?notice=github-updated#repositories', url.origin)
+        : new URL('/feed#repositories', url.origin)
     return NextResponse.redirect(destination)
   } catch (error) {
     console.error('[github/callback] could not finish install', error)
