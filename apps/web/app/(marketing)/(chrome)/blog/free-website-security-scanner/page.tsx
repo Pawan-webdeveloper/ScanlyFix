@@ -8,6 +8,18 @@ export const metadata = {
   },
 }
 
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'BlogPosting',
+  headline: 'Free Website Security Scanner',
+  description: 'Learn how to check your site for vulnerabilities in 60 seconds using a free website security scanner.',
+  author: {
+    '@type': 'Organization',
+    name: 'ScanlyFix',
+  },
+  datePublished: '2026-09-15',
+}
+
 export default function BlogPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
@@ -43,6 +55,8 @@ export default function BlogPage() {
           Run a free scan
         </Link>
       </article>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )
 }

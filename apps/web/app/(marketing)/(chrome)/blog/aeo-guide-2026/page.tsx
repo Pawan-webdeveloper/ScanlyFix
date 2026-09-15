@@ -8,6 +8,18 @@ export const metadata = {
   },
 }
 
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'BlogPosting',
+  headline: 'AEO (Answer Engine Optimization) Guide 2026',
+  description: 'Learn what AEO is and how to optimize your site for AI answer engines like ChatGPT, Perplexity, and Claude.',
+  author: {
+    '@type': 'Organization',
+    name: 'ScanlyFix',
+  },
+  datePublished: '2026-09-15',
+}
+
 export default function AeoGuidePage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
@@ -39,6 +51,8 @@ export default function AeoGuidePage() {
           Run a free AEO scan
         </Link>
       </article>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )
 }

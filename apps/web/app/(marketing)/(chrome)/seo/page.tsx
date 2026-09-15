@@ -8,6 +8,19 @@ export const metadata = {
   },
 }
 
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'SEO Scanner & Audit Tool',
+  description: 'Free SEO audit tool that checks meta tags, structured data, sitemaps, and Core Web Vitals.',
+  applicationCategory: 'SEOTool',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+}
+
 export default function SeoPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
@@ -45,6 +58,8 @@ export default function SeoPage() {
           Run a free SEO audit
         </Link>
       </div>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )
 }

@@ -8,6 +8,19 @@ export const metadata = {
   },
 }
 
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'ScanlyFix Tools',
+  description: 'Free website tools including security scanner, SEO audit, AEO scanner, and uptime monitoring.',
+  applicationCategory: 'SecurityApplication',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+}
+
 export default function ToolsPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
@@ -58,5 +71,7 @@ export default function ToolsPage() {
         </Link>
       </div>
     </div>
+
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
   )
 }

@@ -8,6 +8,19 @@ export const metadata = {
   },
 }
 
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'Lovable Security Scanner',
+  description: 'Security scanner for apps built with Lovable and other vibe-coding platforms.',
+  applicationCategory: 'SecurityApplication',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+}
+
 export default function LovablePage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
@@ -20,6 +33,8 @@ export default function LovablePage() {
           Scan your Lovable app
         </Link>
       </div>
+
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )
 }

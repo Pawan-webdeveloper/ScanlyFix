@@ -8,6 +8,20 @@ export const metadata = {
   },
 }
 
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'Review',
+  itemReviewed: {
+    '@type': 'SoftwareApplication',
+    name: 'Website Security Scanners',
+  },
+  reviewAspect: 'features, pricing, usability',
+  author: {
+    '@type': 'Organization',
+    name: 'ScanlyFix',
+  },
+}
+
 export default function CompareScannersPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
@@ -35,5 +49,7 @@ export default function CompareScannersPage() {
         </Link>
       </div>
     </div>
+
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
   )
 }

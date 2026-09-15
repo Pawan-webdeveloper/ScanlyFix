@@ -63,6 +63,17 @@ export const metadata: Metadata = {
   },
 }
 
+const SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'ScanlyFix',
+  url: siteUrl,
+  logo: `${siteUrl}/icon.png`,
+  description:
+    'Free website security scanner that checks for vulnerabilities, SEO issues, and AI visibility.',
+  applicationCategory: 'SecurityApplication',
+}
+
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
@@ -90,6 +101,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
          * preventing.
          */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
         <Script async src="https://www.googletagmanager.com/gtag/js?id=G-FWCPZRBYKE" />
         <Script id="google-analytics">
           {`
