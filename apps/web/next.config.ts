@@ -25,6 +25,28 @@ const nextConfig: NextConfig = {
    */
   devIndicators: false,
 
+  /**
+   * Image optimization settings for Core Web Vitals
+   */
+  images: {
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    minimumCacheTTL: 60,
+    dangerouslyAllowSVG: true,
+    contentDispositionType: 'attachment',
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
+  },
+
+  /**
+   * Enable compression for faster page loads
+   */
+  compress: true,
+
+  /**
+   * Optimize font loading for better CLS
+   */
+  optimizeFonts: true,
+
   // typedRoutes is deliberately off until the routes it would check actually
   // exist — right now most page files are empty placeholders, so it would only
   // reject links to pages that are one commit away.

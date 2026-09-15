@@ -23,7 +23,7 @@ import './globals.css'
  */
 const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', display: 'swap' })
 const sans = Geist({ subsets: ['latin'], variable: '--font-geist-sans', display: 'swap' })
-const sansFallback = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' })
+const sansFallback = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'optional' })
 
 const siteUrl =
   process.env.NEXT_PUBLIC_APP_URL ||
@@ -77,6 +77,10 @@ const SCHEMA = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  // Prevent viewport changes during page load
+  maximumScale: 1,
+  // Optimize for mobile
+  themeColor: '#0b0d10',
 }
 
 /**
@@ -102,8 +106,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
          */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
-        <Script async src="https://www.googletagmanager.com/gtag/js?id=G-FWCPZRBYKE" />
-        <Script id="google-analytics">
+        {/* Preconnect to Google Fonts for faster font loading */}
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <Script strategy="lazyOnload" src="https://www.googletagmanager.com/gtag/js?id=G-FWCPZRBYKE" />
+        <Script id="google-analytics" strategy="lazyOnload">
           {`
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}

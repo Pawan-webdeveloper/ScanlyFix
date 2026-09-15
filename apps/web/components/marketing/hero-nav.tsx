@@ -46,7 +46,8 @@ export function HeroNavClient() {
   if (!mounted) {
     // The signed-out nav, identical to the server HTML, so hydration moves
     // nothing for the anonymous majority of visitors.
-    return <HeroNavView signedIn={false} email={null} />
+    // Pre-render the scan link directly to avoid layout shift on mount.
+    return <HeroNavView signedIn={false} email={null} preloadedLink="/scan" />
   }
 
   return (
@@ -62,7 +63,15 @@ function HeroNavSession() {
   return <HeroNavView signedIn={user != null} email={user?.email ?? null} />
 }
 
-function HeroNavView({ signedIn, email }: { signedIn: boolean; email: string | null }) {
+function HeroNavView({
+  signedIn,
+  email,
+  preloadedLink,
+}: {
+  signedIn: boolean
+  email: string | null
+  preloadedLink?: string
+}) {
   // Falls back to the wordmark's first letter when the account has no email
   // (a provider edge), so the mark is never an empty box.
   const initial = (email ?? 'scanlyfix').slice(0, 1).toUpperCase()
@@ -106,7 +115,7 @@ function HeroNavView({ signedIn, email }: { signedIn: boolean; email: string | n
           {initial}
         </Link>
       ) : (
-        <a href="#scan" className={`hero-link relative hidden sm:inline ${NAV_LABEL}`}>
+        <a href={preloadedLink || '#scan'} className={`hero-link relative hidden sm:inline ${NAV_LABEL}`}>
           Scan a site →
         </a>
       )}
