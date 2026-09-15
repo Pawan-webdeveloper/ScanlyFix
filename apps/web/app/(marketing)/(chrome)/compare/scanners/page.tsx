@@ -48,6 +48,14 @@ export default function CompareScannersPage() {
           Try ScanlyFix
         </Link>
       </div>
+
+      <p className="mt-8 text-muted">
+        View all our{' '}
+        <Link href="/tools" className="link">
+          free tools
+        </Link>
+        .
+      </p>
     </div>
 
     <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />

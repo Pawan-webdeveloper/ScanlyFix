@@ -72,6 +72,14 @@ export default function ToolsPage() {
       </div>
     </div>
 
+    <p className="mt-8 text-muted">
+      Compare scanners on our{' '}
+      <Link href="/compare/scanners" className="link">
+        comparison page
+      </Link>
+      .
+    </p>
+
     <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
   )
 }

@@ -58,6 +58,17 @@ export default function ScannerPage() {
         </Link>
       </div>
 
+      <p className="mt-8 text-muted">
+        Also check{' '}
+        <Link href="/seo" className="link">
+          SEO
+        </Link>{' '}
+        and{' '}
+        <Link href="/aeo" className="link">
+          AEO (AI visibility)
+        </Link>
+      </p>
+
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )

@@ -52,6 +52,18 @@ export default function AeoGuidePage() {
         </Link>
       </article>
 
+      <p className="mt-8 text-muted">
+        Check our{' '}
+        <Link href="/scanner" className="link">
+          security scanner
+        </Link>{' '}
+        and{' '}
+        <Link href="/seo" className="link">
+          SEO scanner
+        </Link>
+        .
+      </p>
+
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )

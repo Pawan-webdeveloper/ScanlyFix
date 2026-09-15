@@ -56,6 +56,14 @@ export default function BlogPage() {
         </Link>
       </article>
 
+      <p className="mt-8 text-muted">
+        Also check out our{' '}
+        <Link href="/aeo" className="link">
+          AEO guide
+        </Link>
+        .
+      </p>
+
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
     </div>
   )

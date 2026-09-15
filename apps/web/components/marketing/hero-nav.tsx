@@ -27,8 +27,9 @@ const NAV_LABEL = 'font-mono text-sm uppercase tracking-[0.14em]'
 
 /** Only destinations that exist. Adding a page is one line here. */
 const NAV_LINKS: readonly { readonly href: string; readonly label: string }[] = [
-  { href: '/#checks', label: 'Checks' },
-  { href: '/#faq', label: 'FAQ' },
+  { href: '/scanner', label: 'Security Scanner' },
+  { href: '/seo', label: 'SEO Scanner' },
+  { href: '/aeo', label: 'AEO Scanner' },
   { href: '/pricing', label: 'Pricing' },
 ]
 
