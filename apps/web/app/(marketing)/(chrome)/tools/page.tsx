@@ -1,8 +1,8 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Free Web Tools',
-  description: 'Free website tools: security scanner, SEO audit, AEO scanner, and uptime monitoring.',
+  title: 'Free Website Tools | Security, SEO & AEO Scanner',
+  description: 'Free website tools: security scanner, SEO audit, AEO scanner, and uptime monitoring. Check your site health in 60 seconds. No signup required.',
   alternates: {
     canonical: '/tools',
   },

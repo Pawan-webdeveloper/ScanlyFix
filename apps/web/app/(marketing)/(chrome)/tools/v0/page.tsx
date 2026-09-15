@@ -1,8 +1,8 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'v0 Security Scanner',
-  description: 'Check v0 apps for security vulnerabilities, SEO issues, and AI visibility.',
+  title: 'v0 Security Scanner | Check Apps Built with v0',
+  description: 'Check v0 apps for security vulnerabilities, SEO issues, and AI visibility. Free scanner for vibe-coded apps. Run in 60 seconds.',
   alternates: {
     canonical: '/tools/v0',
   },

@@ -1,8 +1,8 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Lovable Security Scanner',
-  description: 'Check Lovable apps for security vulnerabilities, SEO issues, and AI visibility.',
+  title: 'Lovable Security Scanner | Check Apps Built with Lovable',
+  description: 'Check Lovable apps for security vulnerabilities, SEO issues, and AI visibility. Free scanner for vibe-coded apps. Run in 60 seconds.',
   alternates: {
     canonical: '/tools/lovable',
   },
