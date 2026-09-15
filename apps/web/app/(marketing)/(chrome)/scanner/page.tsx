@@ -3,6 +3,9 @@ import Link from 'next/link'
 export const metadata = {
   title: 'Website Security Scanner',
   description: 'Free website security scanner. Check for vulnerabilities, exposed secrets, and misconfigurations in 60 seconds.',
+  alternates: {
+    canonical: '/scanner',
+  },
 }
 
 export default function ScannerPage() {

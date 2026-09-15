@@ -3,6 +3,9 @@ import Link from 'next/link'
 export const metadata = {
   title: 'Website Scanners Compared',
   description: 'Compare ScanlyFix with other website security scanners. Find the right tool for your needs.',
+  alternates: {
+    canonical: '/compare/scanners',
+  },
 }
 
 export default function CompareScannersPage() {

@@ -3,6 +3,9 @@ import Link from 'next/link'
 export const metadata = {
   title: 'AEO Scanner',
   description: 'Free AI visibility scanner. Check if ChatGPT, Perplexity, and Claude can find and cite your site.',
+  alternates: {
+    canonical: '/aeo',
+  },
 }
 
 export default function AeoPage() {

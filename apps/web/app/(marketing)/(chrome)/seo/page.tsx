@@ -3,6 +3,9 @@ import Link from 'next/link'
 export const metadata = {
   title: 'SEO Scanner',
   description: 'Free SEO audit tool. Check meta tags, structured data, sitemaps, and Core Web Vitals.',
+  alternates: {
+    canonical: '/seo',
+  },
 }
 
 export default function SeoPage() {

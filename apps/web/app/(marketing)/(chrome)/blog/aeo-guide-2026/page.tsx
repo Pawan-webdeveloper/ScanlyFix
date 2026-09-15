@@ -3,6 +3,9 @@ import Link from 'next/link'
 export const metadata = {
   title: 'AEO (Answer Engine Optimization) Guide 2026',
   description: 'Learn what AEO is and how to optimize your site for ChatGPT, Perplexity, and other AI answer engines.',
+  alternates: {
+    canonical: '/blog/aeo-guide-2026',
+  },
 }
 
 export default function AeoGuidePage() {

@@ -3,6 +3,9 @@ import Link from 'next/link'
 export const metadata = {
   title: 'Lovable Security Scanner',
   description: 'Check Lovable apps for security vulnerabilities, SEO issues, and AI visibility.',
+  alternates: {
+    canonical: '/tools/lovable',
+  },
 }
 
 export default function LovablePage() {

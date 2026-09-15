@@ -3,6 +3,9 @@ import Link from 'next/link'
 export const metadata = {
   title: 'v0 Security Scanner',
   description: 'Check v0 apps for security vulnerabilities, SEO issues, and AI visibility.',
+  alternates: {
+    canonical: '/tools/v0',
+  },
 }
 
 export default function V0Page() {
