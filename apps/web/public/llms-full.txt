@@ -1,0 +1,53 @@
+# ScanlyFix - Full Documentation
+
+## Getting Started
+To scan a website, go to scanlyfix.com and paste any URL.
+
+## Features
+- Security: Headers, CORS, CSP, exposed secrets
+- SEO: Meta tags, robots.txt, sitemap, structured data
+- AEO: AI visibility, content structure, citations
+- Monitoring: Uptime checks with email alerts
+
+## Products
+### Security Scanner
+Checks for:
+- Security headers (CSP, HSTS, X-Frame-Options)
+- Exposed secrets and API keys
+- CORS and CSRF protection
+- SSL/TLS certificate status
+- Directory listing and sensitive paths
+
+### SEO Scanner
+Checks for:
+- Meta title and description
+- Structured data (Schema.org)
+- Sitemap and robots.txt
+- Open Graph and Twitter cards
+- Canonical tags and hreflang
+- Core Web Vitals
+
+### AEO Scanner
+Checks for:
+- AI bot access (llms.txt)
+- Structured content
+- FAQ and HowTo schema
+- Citations and outbound links
+- Server-side rendering
+
+## API
+The REST API provides access to all scan results.
+
+### Authentication
+Include your API key in the Authorization header.
+
+## MCP Server
+Use the MCP server to run scans from AI agents:
+
+```bash
+npx @scanlyfix/mcp-server
+```
+
+## Integrations
+- GitHub App for repository scanning
+- Supabase for backend security checks

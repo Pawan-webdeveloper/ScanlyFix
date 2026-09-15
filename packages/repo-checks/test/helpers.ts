@@ -8,7 +8,7 @@
  * others stay silent.
  */
 
-import type { RepoCheckContext, RepoApiContext, WorkflowFile } from '../src/types.ts'
+import type { RepoCheckContext, RepoApiContext, RepoCloneContext, WorkflowFile } from '../src/types.ts'
 
 export interface ApiOverrides {
   commits?: RepoApiContext['commits']
@@ -23,6 +23,7 @@ export interface ApiOverrides {
   tree?: RepoApiContext['tree']
   license?: string | null
   gitignore?: string | null
+  clone?: RepoCloneContext
 }
 
 export function makeRepoContext(overrides: ApiOverrides = {}): RepoCheckContext {
@@ -53,6 +54,7 @@ export function makeRepoContext(overrides: ApiOverrides = {}): RepoCheckContext 
       license: overrides.license === undefined ? 'mit' : overrides.license,
       gitignore: overrides.gitignore === undefined ? '.env\n.env.*\n!.env.example\n' : overrides.gitignore,
     },
+    clone: overrides.clone,
   }
 }
 
