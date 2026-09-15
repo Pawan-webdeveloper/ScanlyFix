@@ -152,6 +152,12 @@ function stateFor(provider: ConnectionAppProvider, githubUrl: string | null, ins
   switch (provider) {
     case 'github':
       if (installations.length === 0) return githubNotConnectedState(githubUrl)
+      if (installations.some((inst) => inst.status === 'suspended')) {
+        return {
+          detail: 'Suspended',
+          note: 'Scans are paused — re-enable the ScanlyFix App on GitHub to resume.',
+        }
+      }
       return {
         detail:
           repoCount === undefined

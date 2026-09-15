@@ -55,17 +55,25 @@ const FEED_ERRORS: Record<string, string> = {
   'github-install-failed': 'Could not finish setting up the GitHub App. Try again in a moment.',
 }
 
+const FEED_NOTICES: Record<string, string> = {
+  'github-request-pending':
+    'Request sent — waiting for an organization owner to approve access. Your repositories will appear once approved.',
+  'github-updated': 'GitHub access updated.',
+}
+
 export default async function FeedPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; notice?: string }>
 }) {
-  const { error: errorParam } = await searchParams
+  const { error: errorParam, notice: noticeParam } = await searchParams
   const errorMessage = errorParam ? FEED_ERRORS[errorParam] ?? 'Something went wrong. Try again.' : null
+  const noticeMessage = noticeParam ? FEED_NOTICES[noticeParam] ?? null : null
 
   const user = await requireUser('/feed')
   const viewer = await getViewer()
   const installations = await listInstallationsForViewer(viewer)
+  const suspended = installations.some((inst) => inst.status === 'suspended')
   const supabaseConnections: Connection[] = await listConnectionsForViewer(viewer)
 
   // Fetch repos per installation to avoid the broken cross-table join
@@ -127,6 +135,27 @@ export default async function FeedPage({
             className="rounded-xl border border-red-300/60 bg-red-50 px-5 py-4 text-[14px] leading-relaxed text-red-800"
           >
             {errorMessage}
+          </div>
+        )}
+
+        {/* Notice banner — non-error outcomes from the GitHub callback */}
+        {noticeMessage && (
+          <div
+            role="status"
+            className="rounded-xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-[14px] leading-relaxed text-sky-900"
+          >
+            {noticeMessage}
+          </div>
+        )}
+
+        {/* Suspended banner — scans are paused until the app is re-enabled */}
+        {suspended && (
+          <div
+            role="alert"
+            className="rounded-xl border border-amber-300/60 bg-amber-50 px-5 py-4 text-[14px] leading-relaxed text-amber-900"
+          >
+            Your GitHub App access is suspended — repository scans are paused.
+            Re-enable the ScanlyFix App on GitHub to resume.
           </div>
         )}
 

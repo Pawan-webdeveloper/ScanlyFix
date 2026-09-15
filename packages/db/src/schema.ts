@@ -93,6 +93,15 @@ export const repoScanStatusEnum = pgEnum('repo_scan_status', ['queued', 'running
 export const repoScanProfileEnum = pgEnum('repo_scan_profile', ['shallow', 'deep'])
 export const repoFindingStatusEnum = pgEnum('repo_finding_status', ['open', 'fixed', 'ignored'])
 
+/**
+ * GitHub App installation health. `active` can be scanned; `suspended` means
+ * the account owner (or GitHub) paused the app and the next scan must say so
+ * instead of failing cryptically. `deleted` is deliberately NOT a state — a
+ * deleted installation hard-deletes its row (cascading repos/scans), which is
+ * the same contract the one-repo cap already relies on.
+ */
+export const installationStatusEnum = pgEnum('installation_status', ['active', 'suspended'])
+
 
 /* -------------------------------------------------------------------------- */
 /* jsonb payload shapes                                                       */
@@ -1002,6 +1011,8 @@ export const githubInstallations = pgTable(
     accountLogin: text('account_login').notNull(),
     /** "Organization" | "User" — drives the org-vs-person UI copy. */
     accountType: text('account_type').notNull(),
+    /** Health of the grant; a suspended install pauses scans (see enum above). */
+    status: installationStatusEnum('status').notNull().default('active'),
     installedAt: timestamp('installed_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1730,6 +1741,8 @@ export type Report = typeof reports.$inferSelect
 export type NewReport = typeof reports.$inferInsert
 export type GithubInstallation = typeof githubInstallations.$inferSelect
 export type NewGithubInstallation = typeof githubInstallations.$inferInsert
+/** 'active' | 'suspended' — the enum's values, so callers never retype the union. */
+export type InstallationStatus = (typeof installationStatusEnum.enumValues)[number]
 export type GithubRepo = typeof githubRepos.$inferSelect
 export type NewGithubRepo = typeof githubRepos.$inferInsert
 /** 'shallow' | 'deep' — the enum's values, so callers never retype the union. */
