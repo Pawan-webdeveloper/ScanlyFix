@@ -56,8 +56,8 @@ export default function CompareScannersPage() {
         </Link>
         .
       </p>
-    </div>
 
-    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
+    </div>
   )
 }

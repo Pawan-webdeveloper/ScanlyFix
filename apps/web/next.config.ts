@@ -42,11 +42,6 @@ const nextConfig: NextConfig = {
    */
   compress: true,
 
-  /**
-   * Optimize font loading for better CLS
-   */
-  optimizeFonts: true,
-
   // typedRoutes is deliberately off until the routes it would check actually
   // exist — right now most page files are empty placeholders, so it would only
   // reject links to pages that are one commit away.
