@@ -47,8 +47,23 @@ export async function runRepoScan(request: RepoWorkerRequest): Promise<RepoWorke
   return stubScan(request)
 }
 
+/**
+ * The worker's scan endpoint, derived from the configured base URL.
+ *
+ * SCANLYFIX_REPO_SCANNER_URL names the SERVICE, not the route — the same way
+ * the site scanner's URL is configured and the same value .env.example
+ * documents (`http://github-scanner.scanlyfix.svc.cluster.local:8081`). The
+ * path is this code's business: posting to the bare base URL hit the worker's
+ * 404 and every scan failed as `repo scanner responded 404: {"error":"Not
+ * found"}`. A URL that already carries `/scan` is left alone so both forms work.
+ */
+function scanEndpoint(baseUrl: string): string {
+  const base = baseUrl.replace(/\/+$/, '')
+  return base.endsWith('/scan') ? base : `${base}/scan`
+}
+
 async function callWorker(request: RepoWorkerRequest): Promise<RepoWorkerResult> {
-  const res = await fetch(serverEnv.repoScannerUrl, {
+  const res = await fetch(scanEndpoint(serverEnv.repoScannerUrl), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-scanner-token': serverEnv.repoScannerToken },
     body: JSON.stringify(request),
