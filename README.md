@@ -54,6 +54,7 @@ themselves instead of producing a prompt. No second service to run.
 | `apps/web` | Next.js 16 web app — dashboard, scan reports, marketing site, API routes |
 | `apps/cli` | CLI runner — `buildContext → runChecks → computeScores → print` |
 | `apps/scanner` | Headless browser scanner (Dockerized) — screenshots, PDF, rendered content, axe audit |
+| `apps/github-scanner` | GitHub App repo-scan worker (Dockerized) — clones a repo, runs gitleaks/osv-scanner and the repo checks |
 
 ## Key Files
 

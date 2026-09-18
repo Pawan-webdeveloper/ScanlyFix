@@ -16,9 +16,10 @@
  * ## Endpoints
  *   GET  /health   — liveness; reports the REGISTERED tool versions (no exec).
  *   GET  /version  — runs each binary and reports pinned vs detected versions.
- *   POST /scan     — the scan seam. In this build the GitHub clone pipeline is
- *                    not wired yet, so a valid request is answered 501 rather
- *                    than with fake findings; see runScan.
+ *   POST /scan     — the scan seam. Mints an installation token, assembles the
+ *                    GitHub API context, and for the `deep` profile clones the
+ *                    repo and runs gitleaks + osv-scanner before running the
+ *                    repo checks; see runScan.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'

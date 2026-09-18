@@ -44,13 +44,22 @@ interface TreeResponse {
   tree?: { path: string; type: 'blob' | 'tree'; size?: number }[]
 }
 
+/*
+ * Fields assigned in the body rather than declared as constructor parameter
+ * properties: this service runs straight from source under Node's
+ * `--experimental-strip-types`, which erases type annotations but refuses the
+ * TS-only syntax that would need real code generated — a parameter property
+ * among them. Declared parameter properties throw ERR_UNSUPPORTED_TYPESCRIPT_
+ * SYNTAX at load, so the worker never binds its port. Keep this class plain.
+ */
 export class GithubError extends Error {
-  constructor(
-    readonly path: string,
-    readonly status: number,
-    body: string,
-  ) {
+  readonly path: string
+  readonly status: number
+
+  constructor(path: string, status: number, body: string) {
     super(`GitHub API ${path} responded ${status}: ${body.slice(0, 500)}`)
+    this.path = path
+    this.status = status
   }
 }
 

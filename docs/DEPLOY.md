@@ -1,8 +1,9 @@
 # Deploying ScanlyFix
 
-Four things ship, and they are independent: the **web app** (Next.js), the
-**scanner** (a headless Chromium service), **Convex** (identity only), and
-**Postgres** (everything else). The web app is the only one a visitor talks to.
+Five things ship, and they are independent: the **web app** (Next.js), the
+**browser scanner** (a headless Chromium service), the **repo scanner** (the
+GitHub App worker), **Supabase** (identity only), and **Postgres** (everything
+else). The web app is the only one a visitor talks to.
 
 Work through this in order. Each section says what breaks if it is skipped,
 because most of these fail silently rather than loudly.
@@ -87,6 +88,70 @@ Keep it off the public internet if you can. It is an SSRF engine by design.
 
 **Skipped:** deep scans return fewer findings and PDF export fails. Both
 degrade rather than break.
+
+---
+
+## 4b. Repo scanner — GitHub repo scans
+
+`apps/github-scanner/Dockerfile` builds it. Unlike the browser tier this is not
+optional plumbing: it is the only thing that clones a repository and runs
+`gitleaks` and `osv-scanner` over it, and the only holder of the GitHub App
+credentials used to mint installation tokens. Build context is the repository
+ROOT:
+
+```sh
+docker build -f apps/github-scanner/Dockerfile -t scanlyfix/github-scanner .
+```
+
+It is a long-running `node:http` service — `GET /health` is the liveness probe,
+`POST /scan` the only real route — so it needs a container host, **not** a
+serverless function. Vercel cannot run it. Rebuild and redeploy after any
+change under `apps/github-scanner` or `packages/{checks,repo-checks}`: the image
+copies source at build time and has no watch step.
+
+Worker-side environment — the process refuses to start without any of these:
+
+| Variable | Why |
+| --- | --- |
+| `SCANLYFIX_REPO_SCANNER_TOKEN` | A shared secret you choose (`openssl rand -hex 24`). The service clones arbitrary repositories and runs scanners over them, so it fails closed rather than listening unauthenticated. |
+| `GITHUB_APP_ID` | The ScanlyFix App's numeric id; signs the JWT that mints installation tokens. |
+| `GITHUB_APP_PRIVATE_KEY` | The App's PEM private key, newlines as literal `\n`. |
+
+Web-side environment — the same token, plus the worker's URL:
+
+| Variable | Value |
+| --- | --- |
+| `SCANLYFIX_REPO_SCANNER_URL` | The worker's base URL, no path — e.g. `https://scanner.example.com`, or in-cluster `http://github-scanner.scanlyfix.svc.cluster.local:8081`. The `/scan` path is added by the app. |
+| `SCANLYFIX_REPO_SCANNER_TOKEN` | Byte-for-byte the worker's `SCANLYFIX_REPO_SCANNER_TOKEN`. |
+
+Where to put it:
+
+- **A managed container host** — Fly.io, Railway, Render, Google Cloud Run,
+  AWS App Runner or ECS. One replica is plenty: the service serializes scans
+  internally and Inngest caps the queue at 2.
+- **Your own cluster** — `k8s-github-scanner.yaml` is a ready manifest
+  (`Deployment` + `Service` + egress-locked `NetworkPolicy`). Replace the
+  placeholder `github-app-credentials` Secret with the real App id and key, set
+  the token Secret, and apply it. In kind, `kind load docker-image
+  scanlyfix/github-scanner:latest` in place of pushing to a registry.
+
+**Keep it off the public internet if you can.** It is token-gated, but anyone
+who reaches it can make it clone repositories; prefer a private network path
+between the web app and the worker, and use TLS plus a long random token if the
+endpoint must be public. It needs egress to `github.com`, `api.github.com` and
+`api.osv.dev` on 443, and it never needs the database.
+
+**Skipped or half-set:** with `SCANLYFIX_REPO_SCANNER_URL`/`_TOKEN` unset, repo
+scans never reach the worker and silently return one stub finding
+(`lib/repo-scanner.ts`); with one set and not the other, every scan fails.
+Neither breaks the rest of the product.
+
+### Which scans actually clone
+
+Only the `deep` profile clones. `POST /api/repos/scan` accepts
+`profile: 'shallow' | 'deep'`, but the Scan buttons in the UI send `shallow` —
+GitHub API checks only, no clone and no gitleaks/osv. A deep scan has to be
+requested explicitly until a UI affordance exists.
 
 ---
 
