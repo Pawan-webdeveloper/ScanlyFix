@@ -18,7 +18,28 @@ function required(name: string, value: string | undefined): string {
         '(or the root .env when running locally); see .env.example.',
     )
   }
+  return clean(value)
+}
+
+/**
+ * Normalises a value that arrived from a deployment's environment.
+ *
+ * `required` rejects an ABSENT value, but a value that is present and wrong
+ * passes the emptiness check and only fails later, somewhere less obvious: a
+ * publishable key that picked up a trailing backslash when it was pasted into
+ * the host still looks set, and then Supabase answers 401 "Invalid API key" to
+ * the token exchange, to `getUser`, and to the email code alike — so every
+ * Google and GitHub sign-in ends on a generic "sign-in failed" with nothing on
+ * screen naming the key. The characters trimmed here (whitespace, one matching
+ * pair of surrounding quotes, trailing backslashes) cannot appear in a Supabase
+ * URL, a publishable key, or an origin, so a genuine value is returned as-is.
+ */
+function clean(value: string): string {
   return value
+    .trim()
+    .replace(/^(["'])(.*)\1$/s, '$2')
+    .replace(/\\+$/, '')
+    .trim()
 }
 
 export const publicEnv = {
@@ -47,7 +68,7 @@ export const publicEnv = {
       }
       return 'https://scanlyfix.com'
     }
-    return val.replace(/\/+$/, '')
+    return clean(val).replace(/\/+$/, '')
   },
   /*
    * There is deliberately no `redirectAllowlist` here. One existed and read
